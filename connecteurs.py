@@ -300,9 +300,129 @@ class PlateformeGrilleJSF(Connecteur):
         return f"{self.base}/reservation/grilles.jsf?grilleid=1"
 
 
+# ---------------------------------------------------------------- Relevé fait dans le navigateur (Promoséjours)
+
+DOSSIER_IMPORTS = os.path.join(DOSSIER, "imports")
+FORMULES = {"TI": "Tout inclus", "PC": "Pension complète", "DP": "Demi-pension", "PD": "Petit déjeuner",
+            "LS": "Logement seul", "LO": "Logement seul", "SA": "Logement seul"}
+
+
+def _fichier_import(base):
+    return os.path.join(DOSSIER_IMPORTS, re.sub(r"[^A-Za-z0-9_.-]", "_", hote(base)) + ".json")
+
+
+def importer_releve(contenu):
+    """Importe un fichier exporté par l'extension « Relevé de prix ». Fusionne avec les relevés déjà importés
+    (pour une même date, le relevé le plus récent l'emporte) et ajoute le site à la liste si besoin.
+    Renvoie un résumé : {"site", "produits", "lignes", "nouvelles"}."""
+    data = json.loads(contenu)
+    if data.get("format") != "comparateur-releve-navigateur":
+        raise ValueError("ce fichier n'est pas un relevé exporté par l'extension")
+    base = data["base"].rstrip("/")
+    chemin = _fichier_import(base)
+    try:
+        with open(chemin, encoding="utf-8") as f:
+            stock = json.load(f)
+    except (OSError, ValueError):
+        stock = {"site": data["site"], "base": base, "produits": {}, "lignes": []}
+    stock["produits"].update(data.get("produits") or {})
+    lignes = {(l["code"], l["ville"], l["nuits"], l["date"]): l for l in stock["lignes"]}
+    avant = len(lignes)
+    for c in data.get("captures") or []:
+        rep, params = c.get("reponse") or {}, c.get("params") or {}
+        code = str(params.get("productId") or "")
+        ville = (rep.get("availabilityForm") or {}).get("departureCityCode") or params.get("departureCityCode")
+        for a in rep.get("availabilityList") or []:
+            if not (code and ville and a.get("dt") and a.get("p") and a.get("n")):
+                continue
+            if a.get("t") not in (None, "BY_PERSON"):  # on ne compare que des prix par personne
+                continue
+            ligne = {"code": code, "ville": ville, "nuits": int(a["n"]), "date": a["dt"], "prix": int(a["p"]),
+                     "meilleur_prix": bool(a.get("bestMonthPrice")), "retour": a.get("dr") or "",
+                     "formule": FORMULES.get(a.get("ml"), a.get("ml") or ""),
+                     "vol_direct": "Oui" if a.get("directFlight") else "Non",
+                     "voyagiste": ((data.get("produits") or {}).get(code) or {}).get("voyagiste", ""),
+                     "capture_le": c.get("capture_le", "")}
+            cle = (code, ville, ligne["nuits"], ligne["date"])
+            if cle not in lignes or ligne["capture_le"] >= lignes[cle].get("capture_le", ""):
+                lignes[cle] = ligne
+    stock["lignes"] = list(lignes.values())
+    os.makedirs(DOSSIER_IMPORTS, exist_ok=True)
+    with open(chemin, "w", encoding="utf-8") as f:
+        json.dump(stock, f, ensure_ascii=False)
+    if not any(hote(s["base"]) == hote(base) for s in sites_configures().values()):
+        enregistrer_site({"nom": data["site"], "base": base, "plateforme": "import-navigateur"})
+    return {"site": data["site"], "produits": len({l["code"] for l in stock["lignes"]}),
+            "lignes": len(stock["lignes"]), "nouvelles": len(stock["lignes"]) - avant}
+
+
+class ImportNavigateur(Connecteur):
+    """Site lu à partir des relevés faits dans le navigateur (extension « Relevé de prix ») :
+    aucune requête n'est envoyée au site par l'application."""
+    plateforme = "import-navigateur"
+
+    @staticmethod
+    def reconnaitre(accueil_html, produit_html):
+        return False  # jamais proposé par l'analyse automatique
+
+    def _stock(self):
+        try:
+            with open(_fichier_import(self.base), encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return {"produits": {}, "lignes": []}
+
+    def _lignes(self, code, ville=None, nuits=None):
+        return [l for l in self._stock()["lignes"] if l["code"] == code
+                and (ville is None or l["ville"] == ville) and (nuits is None or l["nuits"] == nuits)]
+
+    def rechercher(self, nom, limite=8):
+        stock = self._stock()
+        codes = {l["code"] for l in stock["lignes"]}
+        res = []
+        for code in codes:
+            p = stock["produits"].get(code, {})
+            nom_p = p.get("nom") or f"Produit {code}"
+            res.append(Candidat(self.nom, nom_p, p.get("url", self.base), code,
+                                f"voyagiste {p['voyagiste']}" if p.get("voyagiste") else "", score_nom(nom, nom_p)))
+        return sorted([c for c in res if c.score >= 0.5], key=lambda c: -c.score)[:limite]
+
+    def villes(self, candidat):
+        libelles = {v["code"]: v["libelle"] for v in self._stock()["produits"].get(candidat.code, {}).get("villes", [])}
+        return {l["ville"]: libelles.get(l["ville"], l["ville"]) for l in self._lignes(candidat.code)}
+
+    def nuits(self, candidat, ville):
+        return sorted({l["nuits"] for l in self._lignes(candidat.code, ville)})
+
+    def mois(self, candidat, ville, nuits):
+        return sorted({(int(l["date"][5:7]), int(l["date"][:4])) for l in self._lignes(candidat.code, ville, nuits)},
+                      key=lambda m: (m[1], m[0]))
+
+    def _du_mois(self, candidat, ville, nuits, mm, aaaa):
+        return [l for l in self._lignes(candidat.code, ville, nuits) if l["date"].startswith(f"{aaaa}-{mm:02d}")]
+
+    def prix(self, candidat, ville, nuits, mm, aaaa):
+        return [{"date": l["date"], "prix_eur": l["prix"], "meilleur_prix": l["meilleur_prix"], "compagnie": "",
+                 "retour": l["retour"], "formule": l["formule"], "vol_direct": l["vol_direct"],
+                 "voyagiste": l["voyagiste"]} for l in sorted(self._du_mois(candidat, ville, nuits, mm, aaaa),
+                                                               key=lambda l: l["date"])]
+
+    def age_secondes(self, candidat, ville, nuits, mm, aaaa):
+        """Âge des prix importés (le plus ancien relevé du mois) : ils ne sont jamais relevés à nouveau ici."""
+        from datetime import datetime
+        dates = [l["capture_le"] for l in self._du_mois(candidat, ville, nuits, mm, aaaa) if l.get("capture_le")]
+        if not dates:
+            return 0
+        plus_ancien = datetime.fromisoformat(min(dates).replace("Z", "+00:00"))
+        return max(0, time.time() - plus_ancien.timestamp())
+
+    def adresse_prix(self, candidat):
+        return self.base
+
+
 # ---------------------------------------------------------------- Registre des sites
 
-PLATEFORMES = {c.plateforme: c for c in (PlateformeCalendrierJSON, PlateformeGrilleJSF)}
+PLATEFORMES = {c.plateforme: c for c in (PlateformeCalendrierJSON, PlateformeGrilleJSF, ImportNavigateur)}
 
 SITES_INTEGRES = [
     {"nom": "Ovoyages", "base": "https://www.ovoyages.com", "plateforme": "calendrier-json"},

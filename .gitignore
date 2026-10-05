@@ -17,6 +17,8 @@ cache/
 # État local de l'application (recréé automatiquement s'il manque)
 sites_ajoutes.json
 sites_a_etudier.json
+# Relevés importés depuis l'extension de navigateur
+imports/
 
 # --- Rapports générés (recréés par les scripts et l'application) ---
 *.docx

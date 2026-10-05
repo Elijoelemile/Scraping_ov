@@ -6,6 +6,7 @@ Trois onglets :
   Détail     — les lignes brutes (site, date, prix, meilleur prix, compagnie)
 """
 import io
+from datetime import datetime
 
 from openpyxl import Workbook
 from openpyxl.comments import Comment
@@ -23,7 +24,9 @@ FORMAT_EUR = '#,##0 "€"'
 FORMAT_DATE = "DD/MM/YYYY"
 AUCUNE = "Aucun départ"  # case de prix sans départ (texte : ignoré par COUNT, MIN, AVERAGE)
 UN_SEUL = "Un seul site"  # écart impossible : un seul site a un prix
-NON_PRECISEE = "Non précisée"  # compagnie aérienne absente (le site ne l'indique pas)
+NON_PRECISEE = "Non précisée"
+EXTRAS_DETAIL = [("retour", "Date de retour"), ("formule", "Formule"), ("vol_direct", "Vol direct"),
+                 ("voyagiste", "Voyagiste")]  # compagnie aérienne absente (le site ne l'indique pas)
 
 
 def _entete(ws, ligne, titres):
@@ -131,8 +134,11 @@ def construire_xlsx(produit, sites, contexte, large, details, releve_le, nuits):
         synth.column_dimensions[get_column_letter(j)].width = largeur
 
     # ---------------------------------------------------------- Détail
+    # Colonnes fournies par certains sites seulement (relevé navigateur Promoséjours) : ajoutées si présentes
+    extras = [(col, titre) for col, titre in EXTRAS_DETAIL
+              if col in details.columns and details[col].fillna("").astype(str).str.strip().ne("").any()]
     _entete(det, 1, ["Site", "Date", "Jour", "Semaine", "Nombre de nuits", "Prix", "Meilleur prix du site",
-                     "Compagnie aérienne"])
+                     "Compagnie aérienne"] + [titre for _, titre in extras])
     d = details.sort_values(["date", "site"]).reset_index(drop=True)
     for i, r in d.iterrows():
         n = i + 2
@@ -144,9 +150,16 @@ def construire_xlsx(produit, sites, contexte, large, details, releve_le, nuits):
         _ecrire(det, n, 6, int(r["prix_eur"]), FORMAT_EUR)
         _ecrire(det, n, 7, "Oui" if r["meilleur_prix"] else "", centre=True)
         _ecrire(det, n, 8, r.get("compagnie") or NON_PRECISEE)
+        for k, (col, _) in enumerate(extras, start=9):
+            v = r.get(col)
+            if col == "retour" and isinstance(v, str) and v:
+                _ecrire(det, n, k, datetime.strptime(v, "%Y-%m-%d"), FORMAT_DATE, centre=True)
+            else:
+                _ecrire(det, n, k, v if isinstance(v, str) and v else NON_PRECISEE, centre=True)
+    derniere_col = get_column_letter(8 + len(extras))
     det.freeze_panes = "A2"
-    det.auto_filter.ref = f"A1:H{len(d) + 1}"
-    for j, largeur in enumerate([16, 12, 8, 12, 10, 12, 20, 22], start=1):
+    det.auto_filter.ref = f"A1:{derniere_col}{len(d) + 1}"
+    for j, largeur in enumerate([16, 12, 8, 12, 10, 12, 20, 22] + [16] * len(extras), start=1):
         det.column_dimensions[get_column_letter(j)].width = largeur
 
     tampon = io.BytesIO()

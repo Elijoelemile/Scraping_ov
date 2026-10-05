@@ -116,6 +116,26 @@ with st.sidebar:
                 ss.connecteurs.pop(s["nom"], None)
                 ss.pop("derniere_analyse", None)
                 st.rerun()
+    st.divider()
+    st.header("Importer un relevé navigateur")
+    st.caption("Pour un site protégé contre les robots (Promoséjours) : parcourez son calendrier dans votre "
+               "navigateur avec l'extension « Relevé de prix », exportez le fichier, puis importez-le ici. "
+               "Le site apparaît alors dans le champ « Site » comme les autres.")
+    fichier = st.file_uploader("Fichier exporté par l'extension (.json)", type=["json"], key="import_navigateur")
+    if fichier is not None and ss.get("dernier_import") != (fichier.name, fichier.size):
+        try:
+            resume = C.importer_releve(fichier.getvalue())
+            ss.dernier_import = (fichier.name, fichier.size)
+            ss.memo = {}  # villes, durées et mois à relire avec les nouvelles données
+            ss.connecteurs.pop(resume["site"], None)
+            ss.message_import = (f"✅ {resume['site']} : {resume['nouvelles']} nouvelle(s) date(s) importée(s), "
+                                 f"{resume['lignes']} au total pour {resume['produits']} Produit(s).")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Import impossible : {e}")
+    if ss.get("message_import"):
+        st.success(ss.message_import)
+
     a_etudier = C.sites_a_etudier()
     if a_etudier:
         st.divider()
@@ -297,6 +317,13 @@ if b1.button(f"Lancer le relevé (≈ {max(1, round(duree_estimee / 60))} min)",
         for mm, aaaa in periode:
             k += 1
             barre.progress(k / etapes, text=f"{s} · {libelle_mois((mm, aaaa))}")
+            conn = ss.connecteurs[s]
+            if hasattr(conn, "age_secondes"):  # relevé importé du navigateur : pas de requête, pas de cache
+                prix = conn.prix(c, ville, nuits, mm, aaaa)
+                if prix:
+                    ages.append(conn.age_secondes(c, ville, nuits, mm, aaaa))
+                lignes += [dict(p, site=s) for p in prix]
+                continue
             cle = f"prix_{s}_{c.code}_{ville}_{nuits}_{mm:02d}_{aaaa}"
             prix = C.cache_lire(cle, duree_cache) if duree_cache else None
             if prix is None:

@@ -132,6 +132,30 @@ Un site **accessible** dont la plateforme est inconnue est placé dans **« Site
 
 ---
 
+## Sites protégés : relevé dans le navigateur (Promoséjours)
+
+Promoséjours bloque les robots (Cloudflare). L'application ne l'interroge donc pas elle-même. C'est **vous** qui consultez le site normalement, et l'extension **« Relevé de prix »** garde les prix que le site vous affiche. Elle ne clique sur rien et n'envoie aucune requête.
+
+### Installer l'extension (une seule fois, Chrome ou Edge)
+
+1. Ouvrez `chrome://extensions` (ou `edge://extensions`).
+2. Activez le **Mode développeur** (en haut à droite pour Chrome, à gauche pour Edge).
+3. Cliquez sur **Charger l'extension non empaquetée** et choisissez le dossier `extension_navigateur` du projet.
+4. Épinglez l'icône « Relevé de prix » dans la barre du navigateur.
+
+### Faire un relevé
+
+1. Ouvrez la page d'un Produit sur Promoséjours, de préférence **sans être connecté** à votre compte.
+2. Dans le calendrier, choisissez la ville et la durée, puis **parcourez les mois** voulus. L'icône de l'extension compte les mois relevés.
+3. Cliquez sur l'icône puis sur **« Exporter pour l'application »**. Un fichier `releve_promosejours_….json` est enregistré dans vos Téléchargements.
+4. Dans l'application, panneau de gauche, section **« Importer un relevé navigateur »**, déposez ce fichier.
+
+Promoséjours apparaît alors dans le champ **Site** et se compare aux autres sites. Plusieurs imports se cumulent : pour une même date, le relevé le plus récent l'emporte. Les prix ne se mettent pas à jour seuls : pour des prix récents, refaites un relevé. Leur âge est affiché au-dessus des résultats.
+
+Informations en plus pour Promoséjours, visibles dans l'onglet **Détail** de l'export Excel : date de retour, formule (tout inclus…), vol direct et voyagiste.
+
+---
+
 ## Scripts en ligne de commande
 
 Les rapports Word d'origine, qui donnent les tarifs du mercredi et du samedi par semaine, peuvent aussi être produits sans l'application :
@@ -163,6 +187,7 @@ Options communes : `--ville`, `--nuits`, `--debut` / `--fin` (format `MM-AAAA`),
 | `scrape_ovoyages.py`, `scrape_exotismes.py` | Lecture des prix d'Ovoyages et d'Exotismes |
 | `rapport_ovoyages.py`, `rapport_exotismes.py`, `comparer_sites.py` | Rapports Word en ligne de commande |
 | `lancer_app.bat` | Lancement de l'application par double-clic |
+| `extension_navigateur/` | Extension Chrome/Edge « Relevé de prix » (sites protégés) |
 | `requirements.txt`, `packages.txt` | Modules Python et paquets système (déploiement en ligne) |
 
 ### Fichiers créés à l'usage (non versionnés)
@@ -172,6 +197,7 @@ Options communes : `--ville`, `--nuits`, `--debut` / `--fin` (format `MM-AAAA`),
 | `cache/` | Relevés de prix et catalogues mis en cache |
 | `sites_ajoutes.json` | Sites ajoutés depuis l'application |
 | `sites_a_etudier.json` | Sites accessibles en attente d'un connecteur |
+| `imports/` | Relevés importés depuis l'extension de navigateur |
 | `*.docx`, `*.pdf`, `*.xlsx` | Rapports générés |
 
 ---
@@ -179,6 +205,6 @@ Options communes : `--ville`, `--nuits`, `--debut` / `--fin` (format `MM-AAAA`),
 ## Bonnes pratiques
 
 - **Discrétion** : les scripts attendent environ 3 secondes entre deux requêtes vers un même site et réutilisent les relevés récents. Évitez de réduire la pause ou de lancer des relevés en boucle.
-- **Sites protégés** : l'application ne contourne aucune protection anti-robot. Un site bloqué n'est pas ajouté.
+- **Sites protégés** : l'application ne contourne aucune protection anti-robot. Un site bloqué n'est pas ajouté automatiquement ; ses prix peuvent être relevés à la main avec l'extension de navigateur.
 - **`robots.txt`** : certains sites demandent aux robots de ne pas lire leurs pages de prix. L'application le signale, et c'est à l'utilisateur de décider de l'usage qu'il en fait.
 - **Fiabilité** : si un site modifie son fonctionnement, son connecteur peut cesser de marcher. Le relevé affiche alors un avertissement pour le site concerné, sans bloquer les autres.

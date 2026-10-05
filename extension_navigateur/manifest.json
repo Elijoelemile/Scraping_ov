@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Relevé de prix — Comparateur",
+  "version": "1.0",
+  "description": "Garde les prix du calendrier Promoséjours affichés pendant votre navigation, pour les importer dans le comparateur.",
+  "permissions": ["storage"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "Relevé de prix" },
+  "content_scripts": [
+    {
+      "matches": ["https://www.promosejours.com/*"],
+      "js": ["capture.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.promosejours.com/*"],
+      "js": ["relais.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
