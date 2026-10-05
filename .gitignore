@@ -1,0 +1,34 @@
+# --- Secrets (ne jamais publier) ---
+.env
+.env.*
+.streamlit/secrets.toml
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# --- Données générées par l'application ---
+# Prix relevés et catalogues mis en cache (recréés automatiquement)
+cache/
+# État local de l'application (recréé automatiquement s'il manque)
+sites_ajoutes.json
+sites_a_etudier.json
+
+# --- Rapports générés (recréés par les scripts et l'application) ---
+*.docx
+*.pdf
+*.xlsx
+*.csv
+# Fichiers temporaires de Word / Excel
+~$*
+
+# --- Éditeurs et système ---
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
