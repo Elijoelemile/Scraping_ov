@@ -33,6 +33,7 @@ os.makedirs(DOSSIER_CACHE, exist_ok=True)
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
 PAUSE = 3.0  # secondes entre deux requêtes vers un même site
+DELAI = (10, 25)  # secondes max. pour se connecter, puis pour recevoir la réponse : un site en panne ne bloque pas longtemps
 
 
 @dataclass
@@ -119,7 +120,7 @@ class Connecteur:
 
     def get(self, url, **kw):
         self.attendre()
-        return self.session.get(url if url.startswith("http") else self.base + url, timeout=kw.pop("timeout", 30), **kw)
+        return self.session.get(url if url.startswith("http") else self.base + url, timeout=kw.pop("timeout", DELAI), **kw)
 
     # Interface à implémenter par chaque plateforme
     def rechercher(self, nom, limite=8): raise NotImplementedError
@@ -245,7 +246,7 @@ class PlateformeGrilleJSF(Connecteur):
             data = {i["name"]: i.get("value", "") for i in form.find_all("input") if i.get("name")}
             data[champ["name"]] = nom
             self.attendre()
-            html = self.session.post(self.base + form["action"], data=data, timeout=30).text
+            html = self.session.post(self.base + form["action"], data=data, timeout=DELAI).text
             vus = {}
             for url, categorie, code, slug in re.findall(r'href="(/voyages/\d+-([^/"]+)/(\d+)-([^"/]+)\.jsf)"', html):
                 vus[code] = {"nom": slug_en_nom(slug), "url": self.base + url, "code": code,

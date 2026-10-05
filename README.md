@@ -29,7 +29,7 @@ Sites pris en charge : **Ovoyages** et **Exotismes**, plus tout site ajouté dep
 ## Prérequis
 
 - **Windows** avec **Python 3.12** (ou plus récent).
-- **Microsoft Word**, uniquement pour l'export **PDF**. Les exports Word et Excel n'en ont pas besoin.
+- Pour l'export **PDF** : **Microsoft Word** sous Windows, ou **LibreOffice** (installé automatiquement en ligne). Les exports Word et Excel n'en ont pas besoin.
 - Une connexion Internet : les prix sont lus en direct sur les sites.
 
 ## Installation
@@ -37,10 +37,10 @@ Sites pris en charge : **Ovoyages** et **Exotismes**, plus tout site ajouté dep
 ```bash
 git clone https://github.com/Elijoelemile/Scraping_ov.git
 cd Scraping_ov
-pip install streamlit pandas altair requests beautifulsoup4 python-docx openpyxl
+pip install -r requirements.txt
 ```
 
-Versions testées : streamlit 1.42, pandas 2.2, altair 5.5, requests 2.32, beautifulsoup4 4.13, openpyxl 3.1.
+`requirements.txt` fixe les versions testées. Pour l'export PDF hors Windows, LibreOffice est nécessaire (voir `packages.txt`).
 
 ## Lancement
 
@@ -57,6 +57,25 @@ Au choix :
 L'application s'ouvre dans le navigateur à l'adresse **http://localhost:8501**. Pour l'arrêter, fermez la fenêtre du terminal ou appuyez sur `Ctrl+C`.
 
 > Lancer `python app.py` fonctionne aussi : le script démarre Streamlit tout seul.
+
+## Déploiement sur Streamlit Community Cloud
+
+Sur [share.streamlit.io](https://share.streamlit.io), **Create app** :
+
+| Champ | Valeur |
+|---|---|
+| Repository | `Elijoelemile/Scraping_ov` |
+| Branch | `main` |
+| Main file path | `app.py` |
+| Paramètres avancés → Python version | `3.12` |
+
+Le serveur installe automatiquement `requirements.txt` (modules Python) et `packages.txt` (LibreOffice et polices, pour l'export PDF).
+
+À savoir en ligne :
+- **Accès** : l'application est publique par défaut. Limitez-la aux personnes invitées dans **Share** pour éviter que n'importe qui lance des relevés.
+- **Données éphémères** : le cache, les sites ajoutés et les sites à étudier sont effacés à chaque redémarrage du serveur.
+- **Adresse des requêtes** : les relevés partent des serveurs de Streamlit. Un site qui bloque les adresses de serveurs peut être refusé en ligne alors qu'il fonctionne en local.
+- **Heure** : les dates et heures de relevé sont affichées à l'heure de Paris.
 
 ---
 
@@ -139,11 +158,12 @@ Options communes : `--ville`, `--nuits`, `--debut` / `--fin` (format `MM-AAAA`),
 | `app.py` | Application Streamlit (interface, filtres, résultats) |
 | `connecteurs.py` | Connecteurs par plateforme, registre des sites, cache |
 | `analyse_site.py` | Analyse d'un site avant son ajout |
-| `export_word.py` | Export Word et conversion PDF (via Microsoft Word) |
+| `export_word.py` | Export Word et conversion PDF (Microsoft Word ou LibreOffice) |
 | `export_excel.py` | Export Excel (Synthèse, Comparatif, Détail) |
 | `scrape_ovoyages.py`, `scrape_exotismes.py` | Lecture des prix d'Ovoyages et d'Exotismes |
 | `rapport_ovoyages.py`, `rapport_exotismes.py`, `comparer_sites.py` | Rapports Word en ligne de commande |
 | `lancer_app.bat` | Lancement de l'application par double-clic |
+| `requirements.txt`, `packages.txt` | Modules Python et paquets système (déploiement en ligne) |
 
 ### Fichiers créés à l'usage (non versionnés)
 

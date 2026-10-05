@@ -1,6 +1,7 @@
 """Export Word / PDF du comparatif affiché dans l'application (1 à N sites)."""
 import io
 import os
+import shutil
 import subprocess
 import tempfile
 from datetime import datetime
@@ -116,18 +117,31 @@ def construire_docx(produit, sites, contexte, large, synthese, releve_le):
 
 
 def docx_en_pdf(docx_bytes):
-    """Conversion via Microsoft Word (Windows). Renvoie None si Word n'est pas disponible."""
+    """Conversion en PDF : Microsoft Word sous Windows, sinon LibreOffice (serveurs Linux, Streamlit Cloud).
+    Renvoie None si aucun des deux n'est disponible."""
     with tempfile.TemporaryDirectory() as d:
         src, dst = os.path.join(d, "rapport.docx"), os.path.join(d, "rapport.pdf")
         with open(src, "wb") as f:
             f.write(docx_bytes)
-        script = (f"$w=New-Object -ComObject Word.Application; $w.Visible=$false; "
-                  f"$d=$w.Documents.Open('{src}',$false,$true); $d.ExportAsFixedFormat('{dst}',17); "
-                  f"$d.Close($false); $w.Quit()")
-        try:
-            subprocess.run(["powershell", "-NoProfile", "-Command", script], check=True, timeout=180,
-                           capture_output=True)
+        if os.name == "nt":
+            script = (f"$w=New-Object -ComObject Word.Application; $w.Visible=$false; "
+                      f"$d=$w.Documents.Open('{src}',$false,$true); $d.ExportAsFixedFormat('{dst}',17); "
+                      f"$d.Close($false); $w.Quit()")
+            try:
+                subprocess.run(["powershell", "-NoProfile", "-Command", script], check=True, timeout=180,
+                               capture_output=True)
+            except Exception:
+                pass
+        soffice = shutil.which("soffice") or shutil.which("libreoffice")
+        if not os.path.exists(dst) and soffice:
+            try:
+                # profil LibreOffice dans le dossier temporaire : évite les conflits entre conversions
+                subprocess.run([soffice, f"-env:UserInstallation=file://{d}/profil", "--headless",
+                                "--convert-to", "pdf", "--outdir", d, src],
+                               check=True, timeout=180, capture_output=True)
+            except Exception:
+                pass
+        if os.path.exists(dst):
             with open(dst, "rb") as f:
                 return f.read()
-        except Exception:
-            return None
+        return None

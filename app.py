@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 import streamlit as st
 from streamlit import runtime
@@ -25,6 +26,8 @@ from export_word import construire_docx, docx_en_pdf
 from rapport_ovoyages import MOIS_FR
 
 JOURS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
+# Heure de Paris : les serveurs en ligne (Streamlit Cloud) sont à l'heure UTC
+PARIS = ZoneInfo("Europe/Paris")
 # Couleur fixe par site (ordre de la liste des sites) : la couleur suit le site, jamais son rang
 PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
 VERT = "#C6EFCE"
@@ -152,13 +155,13 @@ if lancer_recherche:
     else:
         ss.produit, ss.sites = produit.strip(), sites_choisis
         ss.pop("releve", None)
-        trouves = {}
+        trouves, ss.injoignables = {}, {}
         with st.spinner("Recherche du Produit sur les sites…"):
             for s in sites_choisis:
                 try:
                     trouves[s] = ss.connecteurs[s].rechercher(produit)
                 except Exception as e:  # un site en panne ne bloque pas les autres
-                    st.error(f"{s} : recherche impossible ({e})")
+                    ss.injoignables[s] = e.__class__.__name__
                     trouves[s] = []
             # Le même Produit porte souvent un autre nom selon le site : si un site n'a pas de correspondance
             # nette, on relance sa recherche avec le nom complet trouvé sur un autre site.
@@ -166,7 +169,7 @@ if lancer_recherche:
             if nets:
                 reference = max(nets, key=lambda c: c.score).nom
                 for s in sites_choisis:
-                    if not any(c.score >= 1 for c in trouves[s]):
+                    if s not in ss.injoignables and not any(c.score >= 1 for c in trouves[s]):
                         try:
                             extra = ss.connecteurs[s].rechercher(reference)
                         except Exception:
@@ -187,7 +190,10 @@ colonnes = st.columns(len(ss.candidats))
 for col, (s, lst) in zip(colonnes, ss.candidats.items()):
     with col:
         st.markdown(f"**{s}**")
-        if not lst:
+        if s in ss.get("injoignables", {}):
+            st.error("Site injoignable pour le moment : il ne répond pas. Réessayez plus tard ; "
+                     "les autres sites sont comparés normalement.")
+        elif not lst:
             st.warning("Aucun Produit trouvé sur ce site.")
         else:
             cands = [C.candidat_depuis_dict(d) for d in lst]
@@ -208,18 +214,42 @@ if not choix:
 
 # ------------------------------------------------------------------ 3. Paramètres du relevé
 st.subheader("Paramètres du relevé")
-try:
-    with st.spinner("Lecture des villes de départ, durées et mois proposés…"):
-        villes_par_site = {s: memo(("villes", s, c.code), lambda s=s, c=c: ss.connecteurs[s].villes(c))
-                           for s, c in choix.items()}
-        communes = set.intersection(*(set(v) for v in villes_par_site.values()))
-        libelles = {}
-        for v in villes_par_site.values():
-            for code, lib in v.items():
-                libelles.setdefault(code, lib)
-except Exception as e:
-    st.error(f"Impossible de lire les options du Produit : {e}")
-    st.stop()
+ecartes = {}  # site -> raison : un site qui ne répond pas est écarté, les autres restent comparés
+
+
+def lire_par_site(quoi, fonction):
+    """Lit une option (villes, nuits, mois) sur chaque site retenu ; écarte les sites en panne."""
+    res = {}
+    for s, c in list(choix.items()):
+        try:
+            res[s] = memo((quoi, s, c.code, *quoi_cle), lambda s=s, c=c: fonction(ss.connecteurs[s], c))
+        except Exception as e:
+            ecartes[s] = e.__class__.__name__
+            choix.pop(s)
+    return res
+
+
+deja_signales = set()
+
+
+def afficher_ecartes():
+    for s in set(ecartes) - deja_signales:
+        deja_signales.add(s)
+        st.warning(f"{s} est écarté : le site ne répond pas pour le moment. Les autres sites sont comparés normalement.")
+    if not choix:
+        st.error("Aucun site ne répond pour le moment. Réessayez plus tard.")
+        st.stop()
+
+
+quoi_cle = ()
+with st.spinner("Lecture des villes de départ…"):
+    villes_par_site = lire_par_site("villes", lambda conn, c: conn.villes(c))
+afficher_ecartes()
+communes = set.intersection(*(set(v) for v in villes_par_site.values()))
+libelles = {}
+for v in villes_par_site.values():
+    for code, lib in v.items():
+        libelles.setdefault(code, lib)
 
 if not communes:
     st.error("Aucune ville de départ commune à ces sites pour ce Produit.")
@@ -229,20 +259,22 @@ p1, p2, p3 = st.columns([2, 1, 3])
 villes_triees = sorted(communes, key=lambda c: (c != "PAR", libelles[c]))
 ville = p1.selectbox("Ville de départ", villes_triees, format_func=lambda c: f"{libelles[c]} ({c})")
 
+quoi_cle = (ville,)
 with st.spinner("Lecture des durées proposées…"):
-    nuits_communes = sorted(set.intersection(*(
-        set(memo(("nuits", s, c.code, ville), lambda s=s, c=c: ss.connecteurs[s].nuits(c, ville)))
-        for s, c in choix.items())))
+    nuits_par_site = lire_par_site("nuits", lambda conn, c: conn.nuits(c, ville))
+afficher_ecartes()
+nuits_communes = sorted(set.intersection(*(set(n) for n in nuits_par_site.values())))
 if not nuits_communes:
     st.error("Aucune durée commune à ces sites pour cette ville de départ.")
     st.stop()
 nuits = p2.selectbox("Nombre de nuits", nuits_communes, index=0)
 
+quoi_cle = (ville, nuits)
 with st.spinner("Lecture des mois proposés…"):
-    mois_dispo = sorted(set().union(*(
-        set(map(tuple, memo(("mois", s, c.code, ville, nuits),
-                            lambda s=s, c=c: ss.connecteurs[s].mois(c, ville, nuits))))
-        for s, c in choix.items())), key=lambda m: (m[1], m[0]))
+    mois_par_site = lire_par_site("mois", lambda conn, c: conn.mois(c, ville, nuits))
+afficher_ecartes()
+mois_dispo = sorted(set().union(*(set(map(tuple, m)) for m in mois_par_site.values())),
+                    key=lambda m: (m[1], m[0]))
 if not mois_dispo:
     st.error("Aucun mois de départ proposé avec ces paramètres.")
     st.stop()
@@ -383,7 +415,8 @@ for s in sites:
 synthese = pd.DataFrame(lignes_synth)
 
 age_min = round((time.time() - R["releve_le"]) / 60)
-st.caption(f"Prix relevés le {datetime.fromtimestamp(R['releve_le']):%d/%m/%Y} à {datetime.fromtimestamp(R['releve_le']):%H:%M}"
+releve_paris = datetime.fromtimestamp(R["releve_le"], PARIS)
+st.caption(f"Prix relevés le {releve_paris:%d/%m/%Y} à {releve_paris:%H:%M}"
            + (f" (il y a {age_min} min)" if age_min else " (à l'instant)")
            + ". Relancez le relevé pour actualiser.")
 m1, m2, m3 = st.columns(3)
@@ -463,7 +496,7 @@ with onglets[3]:
 
 with onglets[4]:
     nom_fichier = "comparatif_" + "_".join(C.normaliser(ss.produit)) + f"_{date.today():%Y%m%d}"
-    releve_le = datetime.fromtimestamp(R["releve_le"])
+    releve_le = datetime.fromtimestamp(R["releve_le"], PARIS)
     docx = construire_docx(ss.produit, sites, contexte, large, synthese, releve_le)
     # Détail Excel : les lignes brutes des dates affichées (mêmes filtres que le tableau)
     details = filtre[filtre["date"].isin(large["date"]) & filtre["site"].isin(sites)]
@@ -473,10 +506,10 @@ with onglets[4]:
                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                        use_container_width=True)
     if e2.button("Préparer le PDF", use_container_width=True):
-        with st.spinner("Conversion en PDF avec Word…"):
+        with st.spinner("Conversion en PDF…"):
             ss.pdf, ss.pdf_de = docx_en_pdf(docx), hash(docx)
         if ss.pdf is None:
-            st.error("Conversion impossible : Microsoft Word est nécessaire pour créer le PDF.")
+            st.error("Conversion impossible : Microsoft Word ou LibreOffice est nécessaire pour créer le PDF.")
     if ss.get("pdf") and ss.get("pdf_de") == hash(docx):  # PDF à jour avec les filtres affichés
         e2.download_button("Télécharger le PDF", ss.pdf, file_name=nom_fichier + ".pdf", mime="application/pdf",
                            use_container_width=True)
