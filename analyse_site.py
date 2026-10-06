@@ -120,7 +120,7 @@ def analyser(adresse, lien_produit="", nom="", progression=lambda texte: None):
     if not produit_html:
         # Sans lien fourni : on ouvre une page Produit trouvée sur l'accueil pour reconnaître la plateforme
         liens = re.findall(r'href="((?:https?://[^"]+)?/voyages/\d+-[^"/]+/\d+-[^"/]+\.jsf)"', accueil) + \
-                re.findall(r'href="((?:https?://[^"]+)?/[a-z0-9-]+/[^"?#]*-\d{4,})"', accueil)
+                re.findall(r'href="((?:https?://[^"]+)?/[a-z0-9-]+/[^"?#]*-\d{4,})"', accueil) +                 re.findall(r'href="((?:https?://[^"]+)?/[a-z0-9-]+-\d{4,}\.html)', accueil)
         if liens:
             lien = liens[0] if liens[0].startswith("http") else base + liens[0]
             try:
@@ -150,7 +150,7 @@ def analyser(adresse, lien_produit="", nom="", progression=lambda texte: None):
     # Le nom cherché est celui du Produit de test (tiré de son adresse), sinon des mots courants
     requetes = []
     if lien_test:
-        slug = urlparse(lien_test).path.rstrip("/").rsplit("/", 1)[-1].removesuffix(".jsf")
+        slug = urlparse(lien_test).path.rstrip("/").rsplit("/", 1)[-1].removesuffix(".jsf").removesuffix(".html")
         slug = re.sub(r"^\d+-|-\d{4,}$", "", slug)
         requetes.append(" ".join(m for m in slug.split("-") if not m.isdigit()))
     requetes += ["resort", "beach", "club", "palace"]

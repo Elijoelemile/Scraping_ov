@@ -1,10 +1,24 @@
 # Comparateur de prix de séjours
 
-Application locale qui relève les prix d'un même **Produit** (hôtel, formule séjour) sur plusieurs sites de voyagistes et les compare date par date : tableau mensuel, synthèse, graphique, et export **Word, PDF et Excel**.
+Application qui relève les prix d'un même **Produit** (hôtel, formule séjour) sur plusieurs sites de voyagistes et les compare date par date : tableau mensuel, synthèse, graphique, et export **Word, PDF et Excel**. Elle fonctionne en local (Windows) ou en ligne (Streamlit Community Cloud).
 
 Elle reprend le calendrier de prix des sites : chaque ligne du calendrier (du lundi au dimanche) est une **semaine** du mois. Par défaut, on suit les tarifs du **mercredi** et du **samedi**.
 
-Sites pris en charge : **Ovoyages** et **Exotismes**, plus tout site ajouté depuis l'application qui remplit les critères de compatibilité (voir [Ajouter un site](#ajouter-un-site)).
+---
+
+## Sites pris en charge
+
+| Site | Mode | Informations en plus du prix |
+|---|---|---|
+| **Ovoyages** | Relevé automatique | « Meilleur prix » |
+| **Exotismes** | Relevé automatique | « Meilleur prix », compagnie aérienne |
+| **Fram** | Relevé automatique | « Meilleur prix », date de retour, formule |
+| **Promoséjours** | Relevé fait dans votre navigateur (extension), puis importé | « Meilleur prix du mois », date de retour, formule, vol direct, voyagiste |
+| Autres sites | Ajoutés depuis l'application s'ils remplissent les critères | Selon la plateforme |
+
+Voir [Ajouter un site](#ajouter-un-site) et [Sites protégés](#sites-protégés--relevé-dans-le-navigateur-promoséjours).
+
+> Un même Produit peut être vendu par plusieurs sites sous des noms et des références différents. Par exemple, Ovoyages semble revendre des séjours Fram : pour certaines dates, les prix sont identiques.
 
 ---
 
@@ -18,19 +32,21 @@ Sites pris en charge : **Ovoyages** et **Exotismes**, plus tout site ajouté dep
   - synthèse par site ;
   - graphique d'évolution des prix ;
   - meilleures dates.
-- **Exports** :
-  - **Word** et **PDF**, au même format que les rapports ;
-  - **Excel**, avec 3 onglets : Synthèse, Comparatif (filtrable), Détail.
+- **Exports** : **Word** et **PDF**, au même format que les rapports, et **Excel**, avec 3 onglets (Synthèse, Comparatif filtrable, Détail).
 - **Ajout de sites** depuis l'application, après une analyse automatique.
-- **Cache des relevés** : par défaut, un relevé de moins d'une heure est réutilisé pour ne pas interroger les sites inutilement. La durée est réglable.
+- **Sites protégés** : import des prix relevés dans votre navigateur avec l'extension « Relevé de prix ».
+- **Robustesse** : un site en panne est écarté avec un message, et les autres sont comparés normalement.
+- **Cache des relevés** : un relevé récent est réutilisé pour ne pas interroger les sites inutilement. La durée est réglable.
+- **Date et heure du relevé** affichées partout, à l'heure de Paris.
 
 ---
 
 ## Prérequis
 
-- **Windows** avec **Python 3.12** (ou plus récent).
+- **Python 3.12** (ou plus récent), sous Windows en local.
 - Pour l'export **PDF** : **Microsoft Word** sous Windows, ou **LibreOffice** (installé automatiquement en ligne). Les exports Word et Excel n'en ont pas besoin.
 - Une connexion Internet : les prix sont lus en direct sur les sites.
+- Pour Promoséjours : **Chrome** ou **Edge**, avec l'extension du projet.
 
 ## Installation
 
@@ -69,13 +85,12 @@ Sur [share.streamlit.io](https://share.streamlit.io), **Create app** :
 | Main file path | `app.py` |
 | Paramètres avancés → Python version | `3.12` |
 
-Le serveur installe automatiquement `requirements.txt` (modules Python) et `packages.txt` (LibreOffice et polices, pour l'export PDF).
+Le serveur installe automatiquement `requirements.txt` (modules Python) et `packages.txt` (LibreOffice et polices, pour l'export PDF). Chaque envoi sur la branche `main` met l'application à jour. Sinon, utilisez **Reboot app**.
 
 À savoir en ligne :
 - **Accès** : l'application est publique par défaut. Limitez-la aux personnes invitées dans **Share** pour éviter que n'importe qui lance des relevés.
-- **Données éphémères** : le cache, les sites ajoutés et les sites à étudier sont effacés à chaque redémarrage du serveur.
+- **Données éphémères** : le cache, les sites ajoutés depuis le panneau, les sites à étudier et les relevés importés sont **effacés à chaque redémarrage** du serveur. Seuls les sites intégrés au code (Ovoyages, Exotismes, Fram) restent toujours disponibles.
 - **Adresse des requêtes** : les relevés partent des serveurs de Streamlit. Un site qui bloque les adresses de serveurs peut être refusé en ligne alors qu'il fonctionne en local.
-- **Heure** : les dates et heures de relevé sont affichées à l'heure de Paris.
 
 ---
 
@@ -84,9 +99,11 @@ Le serveur installe automatiquement `requirements.txt` (modules Python) et `pack
 1. **Produit** : tapez un nom, par exemple `coral level` ou `bavaro suites`.
 2. **Site** : choisissez un ou plusieurs sites, puis cliquez sur **Rechercher**.
 3. **Vérifiez le Produit trouvé** sur chaque site. Le lien « Voir la page du Produit » ouvre la page exacte sur le site.
-   - Un même nom peut correspondre à plusieurs références. Sur Ovoyages, par exemple, le Bávaro Suites existe sous 3 références avec des prix différents.
+   - Un même nom peut correspondre à plusieurs références, avec des prix différents. Par exemple, Ovoyages a 3 références pour le Bávaro Suites (108505, 235436, 235539), et Fram aussi (79150, 49891, 77807).
    - Si le bon Produit n'apparaît pas, utilisez « Le bon Produit n'est pas là ? » pour chercher un autre nom sur ce site.
-4. **Paramètres** : choisissez la ville de départ, le nombre de nuits et la période, puis cliquez sur **Lancer le relevé**. Comptez environ 4 secondes par mois et par site.
+4. **Paramètres** : choisissez la ville de départ, le nombre de nuits et la période.
+   - **Réutiliser un relevé de moins de** : 1 h par défaut. Choisissez « Jamais » pour relever tous les prix à neuf, par exemple juste avant d'envoyer un comparatif.
+   - Cliquez sur **Lancer le relevé**. Comptez environ 4 secondes par mois et par site (Fram : un seul appel pour tous les mois).
 5. **Filtres** : ajustez jours, semaines, budget… L'affichage se met à jour sans nouvel appel aux sites.
 6. **Export** : onglet « Export Word / PDF / Excel ». Les fichiers reprennent exactement les données et les filtres affichés.
 
@@ -99,15 +116,24 @@ Le serveur installe automatiquement `requirements.txt` (modules Python) et `pack
 | **Un seul site** (colonne Écart) | Un seul site a un prix ce jour-là : pas d'écart calculable |
 | **Égalité** (colonne Moins cher) | Plusieurs sites affichent le même prix le plus bas |
 | **« Site » seul** (colonne Moins cher) | Seul ce site propose un départ ce jour-là |
-| **Non précisée** (Excel, compagnie) | Le site n'indique pas la compagnie aérienne |
+| **Non précisée** (Excel) | Le site ne fournit pas cette information (compagnie, formule…) |
+| **Site injoignable** / **« Site » est écarté** | Le site ne répond pas pour le moment. Les autres sites sont comparés normalement |
 
-Les prix sont **par personne, sur la base d'une chambre double**. Ils changent souvent, parfois en moins d'une heure. La date et l'heure du relevé figurent au-dessus des résultats et dans chaque export.
+Les prix sont **par personne, sur la base d'une chambre double**. Ils changent souvent, parfois en moins d'une heure. La date et l'heure du relevé (heure de Paris) figurent au-dessus des résultats et dans chaque export. Quand des prix réutilisés ou importés sont plus anciens, c'est la date des plus anciens qui est affichée.
+
+### Contenu de l'export Excel
+
+| Onglet | Contenu |
+|---|---|
+| **Synthèse** | Contexte du relevé (Produit, sites, départ, nuits, période, filtres, date), puis par site : dates avec prix, nombre de fois moins cher, prix moyen, prix le plus bas et sa date (formules Excel) |
+| **Comparatif** | Une ligne par date : mois, semaine, jour, date, nombre de nuits, prix de chaque site, moins cher et écart (formules), avec le prix le plus bas surligné en vert. Filtres Excel actifs |
+| **Détail** | Une ligne par site et par date : nombre de nuits, prix, « Meilleur prix », compagnie aérienne et, selon les sites, date de retour, formule, vol direct et voyagiste |
 
 ---
 
 ## Ajouter un site
 
-Dans le panneau de gauche, section **« Ajouter un site »**, saisissez l'adresse du site puis cliquez sur **Analyser le site**.
+Dans le panneau de gauche, section **« Ajouter un site »**, saisissez l'adresse du site puis cliquez sur **Analyser le site**. Le lien d'un Produit du site est facultatif, mais il aide l'analyse.
 
 Le site n'est **ajouté que s'il remplit tous les critères** :
 
@@ -115,20 +141,26 @@ Le site n'est **ajouté que s'il remplit tous les critères** :
 2. plateforme de prix reconnue par l'application ;
 3. recherche d'un Produit par son nom ;
 4. villes de départ et durées lisibles ;
-5. prix date par date, **en euros**.
+5. prix date par date, **en euros** (par exemple, exotismes.ch est refusé car ses prix sont en francs suisses).
 
-Sinon, l'analyse affiche la raison du refus. Le fichier `robots.txt` du site est aussi vérifié et signalé par un avertissement, sans bloquer l'ajout.
+Sinon, l'analyse affiche la raison du refus. Le fichier `robots.txt` du site est aussi vérifié, et signalé par un avertissement ⚠️ s'il interdit les pages de prix, sans bloquer l'ajout.
+
+### Sites à étudier
+
+Un site **accessible** mais dont la plateforme est inconnue est refusé, puis placé dans la liste **« Sites à étudier »** du panneau de gauche, avec des repères techniques. On peut y ajouter une note, par exemple « prioritaire », ou le retirer. Pour le rendre compatible, il faut étudier son fonctionnement et écrire sa plateforme (voir ci-dessous). C'est ainsi que Fram a été ajouté.
 
 ### Plateformes
 
 Un connecteur correspond à une **plateforme de réservation**, c'est-à-dire au logiciel qui calcule et affiche les prix derrière le site. Tous les sites qui utilisent la même plateforme se lisent de la même façon.
 
-| Plateforme | Exemple | Fonctionnement |
+| Plateforme | Sites | Fonctionnement |
 |---|---|---|
-| `calendrier-json` | Ovoyages | Produits listés dans le plan du site ; prix via `/pricetable/…` |
-| `grille-jsf` | Exotismes (.fr, .be) | Recherche par mots-clés ; prix via la grille `/reservation/grilles.jsf` |
+| `calendrier-json` | Ovoyages | Produits listés dans le plan du site ; prix via `/pricetable/…`, un appel par mois |
+| `grille-jsf` | Exotismes (.fr, .be) | Recherche par mots-clés du site ; prix via la grille `/reservation/grilles.jsf`, un appel par mois |
+| `catalogue-fram` | Fram | Produits listés dans le plan du site ; options dans la page Produit ; prix via `/api/ajax/catalogueProduit/calendriers`, tous les mois en un appel |
+| `import-navigateur` | Promoséjours | Prix importés depuis l'extension de navigateur, sans aucune requête de l'application |
 
-Un site **accessible** dont la plateforme est inconnue est placé dans **« Sites à étudier »**, avec des repères techniques. Pour le rendre compatible, il faut écrire une nouvelle classe de plateforme dans `connecteurs.py` et l'ajouter au dictionnaire `PLATEFORMES`.
+**Écrire une plateforme** : créer dans `connecteurs.py` une classe qui hérite de `Connecteur`, implémenter `reconnaitre()`, `rechercher()`, `villes()`, `nuits()`, `mois()`, `prix()` et `adresse_prix()`, puis l'ajouter au dictionnaire `PLATEFORMES`. Pour qu'un site soit **toujours** présent, y compris en ligne, l'ajouter aussi à `SITES_INTEGRES`.
 
 ---
 
@@ -150,15 +182,13 @@ Promoséjours bloque les robots (Cloudflare). L'application ne l'interroge donc 
 3. Cliquez sur l'icône puis sur **« Exporter pour l'application »**. Un fichier `releve_promosejours_….json` est enregistré dans vos Téléchargements.
 4. Dans l'application, panneau de gauche, section **« Importer un relevé navigateur »**, déposez ce fichier.
 
-Promoséjours apparaît alors dans le champ **Site** et se compare aux autres sites. Plusieurs imports se cumulent : pour une même date, le relevé le plus récent l'emporte. Les prix ne se mettent pas à jour seuls : pour des prix récents, refaites un relevé. Leur âge est affiché au-dessus des résultats.
-
-Informations en plus pour Promoséjours, visibles dans l'onglet **Détail** de l'export Excel : date de retour, formule (tout inclus…), vol direct et voyagiste.
+Promoséjours apparaît alors dans le champ **Site** et se compare aux autres sites. Plusieurs imports se cumulent : pour une même date, le relevé le plus récent l'emporte. Les prix ne se mettent pas à jour seuls : pour des prix récents, refaites un relevé. Leur âge est affiché au-dessus des résultats. Le bouton **Effacer** de l'extension vide ses relevés une fois exportés.
 
 ---
 
 ## Scripts en ligne de commande
 
-Les rapports Word d'origine, qui donnent les tarifs du mercredi et du samedi par semaine, peuvent aussi être produits sans l'application :
+Les rapports Word d'origine, qui donnent les tarifs du mercredi et du samedi par semaine pour Ovoyages et Exotismes, peuvent aussi être produits sans l'application :
 
 ```bash
 # Ovoyages : Coral Level, départ Paris, d'octobre 2026 à août 2027
@@ -171,7 +201,21 @@ python rapport_exotismes.py --nuits 7 --ville LYS
 python comparer_sites.py --nuits 5 --debut 10-2026 --fin 08-2027
 ```
 
-Options communes : `--ville`, `--nuits`, `--debut` / `--fin` (format `MM-AAAA`), `--pause` (secondes entre deux requêtes, 3 par défaut) et `--sortie` (fichier Word). `--help` affiche l'aide de chaque script.
+Options communes : `--ville`, `--nuits`, `--debut` / `--fin` (format `MM-AAAA`), `--pause` (secondes entre deux requêtes, 3 par défaut) et `--sortie` (fichier Word). `--help` affiche l'aide de chaque script. Pour Fram, Promoséjours et la comparaison de plus de deux sites, utilisez l'application.
+
+---
+
+## Dépannage
+
+| Problème | Solution |
+|---|---|
+| Le terminal affiche `streamlit run yourscript.py` | Lancez l'application avec `lancer_app.bat`, le bouton ▷ de VS Code ou `python -m streamlit run app.py` |
+| `lancer_app.bat` « n'est pas reconnu » dans PowerShell | Tapez `.\lancer_app.bat`, ou double-cliquez dessus dans l'Explorateur Windows |
+| L'adresse affichée est `localhost:8502` | Une autre copie de l'application tourne déjà : fermez-la, ou utilisez l'adresse affichée |
+| Les prix diffèrent de ceux du site | Vérifiez le **Produit** (référence), le **nombre de nuits** et la **ville** : le site affiche souvent d'autres réglages par défaut. Les prix changent aussi très vite : relancez le relevé avec « Jamais » |
+| « Site injoignable » ou « est écarté » | Le site ne répond pas pour le moment (panne ou surcharge). Réessayez plus tard ; les autres sites restent comparés |
+| « Conversion impossible » pour le PDF | Microsoft Word (Windows) ou LibreOffice est nécessaire. Les exports Word et Excel restent disponibles |
+| Un site ajouté a disparu en ligne | Les sites ajoutés depuis le panneau s'effacent au redémarrage sur Streamlit Cloud : il faut l'intégrer au code (`SITES_INTEGRES`) |
 
 ---
 
@@ -179,24 +223,24 @@ Options communes : `--ville`, `--nuits`, `--debut` / `--fin` (format `MM-AAAA`),
 
 | Fichier | Rôle |
 |---|---|
-| `app.py` | Application Streamlit (interface, filtres, résultats) |
-| `connecteurs.py` | Connecteurs par plateforme, registre des sites, cache |
+| `app.py` | Application Streamlit (interface, filtres, résultats, ajout de sites, import navigateur) |
+| `connecteurs.py` | Plateformes (Ovoyages, Exotismes, Fram, import navigateur), registre des sites, cache |
 | `analyse_site.py` | Analyse d'un site avant son ajout |
 | `export_word.py` | Export Word et conversion PDF (Microsoft Word ou LibreOffice) |
 | `export_excel.py` | Export Excel (Synthèse, Comparatif, Détail) |
-| `scrape_ovoyages.py`, `scrape_exotismes.py` | Lecture des prix d'Ovoyages et d'Exotismes |
+| `scrape_ovoyages.py`, `scrape_exotismes.py` | Lecture des prix d'Ovoyages et d'Exotismes (scripts d'origine) |
 | `rapport_ovoyages.py`, `rapport_exotismes.py`, `comparer_sites.py` | Rapports Word en ligne de commande |
-| `lancer_app.bat` | Lancement de l'application par double-clic |
 | `extension_navigateur/` | Extension Chrome/Edge « Relevé de prix » (sites protégés) |
+| `lancer_app.bat` | Lancement de l'application par double-clic |
 | `requirements.txt`, `packages.txt` | Modules Python et paquets système (déploiement en ligne) |
 
 ### Fichiers créés à l'usage (non versionnés)
 
 | Fichier ou dossier | Contenu |
 |---|---|
-| `cache/` | Relevés de prix et catalogues mis en cache |
+| `cache/` | Relevés de prix, catalogues et fiches Produit mis en cache |
 | `sites_ajoutes.json` | Sites ajoutés depuis l'application |
-| `sites_a_etudier.json` | Sites accessibles en attente d'un connecteur |
+| `sites_a_etudier.json` | Sites accessibles en attente d'une plateforme |
 | `imports/` | Relevés importés depuis l'extension de navigateur |
 | `*.docx`, `*.pdf`, `*.xlsx` | Rapports générés |
 
@@ -204,7 +248,7 @@ Options communes : `--ville`, `--nuits`, `--debut` / `--fin` (format `MM-AAAA`),
 
 ## Bonnes pratiques
 
-- **Discrétion** : les scripts attendent environ 3 secondes entre deux requêtes vers un même site et réutilisent les relevés récents. Évitez de réduire la pause ou de lancer des relevés en boucle.
+- **Discrétion** : l'application attend environ 3 secondes entre deux requêtes vers un même site et réutilise les relevés récents. Évitez de réduire la pause ou de lancer des relevés en boucle.
 - **Sites protégés** : l'application ne contourne aucune protection anti-robot. Un site bloqué n'est pas ajouté automatiquement ; ses prix peuvent être relevés à la main avec l'extension de navigateur.
-- **`robots.txt`** : certains sites demandent aux robots de ne pas lire leurs pages de prix. L'application le signale, et c'est à l'utilisateur de décider de l'usage qu'il en fait.
+- **`robots.txt`** : certains sites demandent aux robots de ne pas lire leurs pages de prix (c'est le cas d'Ovoyages et d'Exotismes, pas de Fram). L'application le signale, et c'est à l'utilisateur de décider de l'usage qu'il en fait.
 - **Fiabilité** : si un site modifie son fonctionnement, son connecteur peut cesser de marcher. Le relevé affiche alors un avertissement pour le site concerné, sans bloquer les autres.

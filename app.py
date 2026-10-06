@@ -103,7 +103,7 @@ with st.sidebar:
             st.error(f"❌ Site non ajouté : {res['raison']}.")
             if res["raison"].startswith("plateforme de prix non reconnue"):
                 st.info("Ce site est accessible : il a été placé dans « Sites à étudier » ci-dessous. "
-                        "Dans une prochaine conversation, dites à Claude « regarde les sites à étudier ».")
+                        "Donc, tu devrais l'étudier.")
     ajoutes = C.sites_ajoutes()
     if ajoutes:
         st.divider()

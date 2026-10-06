@@ -300,6 +300,144 @@ class PlateformeGrilleJSF(Connecteur):
         return f"{self.base}/reservation/grilles.jsf?grilleid=1"
 
 
+# ---------------------------------------------------------------- Plateforme « catalogue Fram »
+
+# Villes de départ Fram (libellé -> code IATA, pour les comparer aux autres sites)
+IATA_VILLES = {
+    "paris": "PAR", "lyon": "LYS", "marseille": "MRS", "nantes": "NTE", "bordeaux": "BOD", "toulouse": "TLS",
+    "nice": "NCE", "lille": "LIL", "strasbourg": "SXB", "brest": "BES", "rennes": "RNS", "montpellier": "MPL",
+    "bruxelles": "BRU", "bruxelles ou charleroi": "BRU", "geneve": "GVA", "bale": "BSL", "bale mulhouse": "BSL",
+    "luxembourg": "LUX", "francfort": "FRA", "amsterdam": "AMS", "barcelone": "BCN", "bilbao": "BIO",
+    "pau": "PUF", "biarritz": "BIQ", "clermont ferrand": "CFE", "metz": "ETZ", "mulhouse": "MLH", "tours": "TUF",
+}
+
+
+def _code_ville(libelle, ident):
+    cle = " ".join(normaliser_mots(libelle))
+    return IATA_VILLES.get(cle, f"V{ident}")  # ville sans code connu : identifiant Fram
+
+
+def normaliser_mots(texte):
+    texte = unicodedata.normalize("NFKD", texte).encode("ascii", "ignore").decode().lower()
+    return re.findall(r"[a-z0-9]+", texte)
+
+
+class PlateformeCatalogueFram(Connecteur):
+    """Produits listés dans le plan du site ; options lues dans la page Produit ;
+    prix via /api/ajax/catalogueProduit/calendriers (tous les mois en un appel par ville et durée)."""
+    plateforme = "catalogue-fram"
+    DUREE_MEMOIRE = 120  # s : un calendrier lu sert pour tous les mois d'un même relevé
+
+    def __init__(self, nom, base):
+        super().__init__(nom, base)
+        self.session.headers["Accept"] = "application/json, text/plain, */*"
+        self._calendriers = {}
+
+    @staticmethod
+    def reconnaitre(accueil_html, produit_html):
+        return "__INITIAL_STATE__" in produit_html and "departureMonths" in produit_html and "disponibilities" in produit_html
+
+    def catalogue(self):
+        cle = f"catalogue_{hote(self.base)}"
+        cat = cache_lire(cle, 24 * 3600)
+        if cat is None:
+            index = self.get("/sitemap.xml").text
+            sous = re.findall(r"<loc>([^<]+)</loc>", index)
+            urls = []
+            for s in [u for u in sous if "produit" in u.lower()] or sous:
+                urls += re.findall(r"<loc>([^<]+)</loc>", self.get(s, timeout=(10, 90)).text)
+            cat = []
+            for url in urls:
+                m = re.search(r"/([^/]+)-(\d+)\.html$", url)
+                if m:
+                    slug = re.sub(r"^(hotel|club|circuit|sejour|autotour|croisiere)-", "", m.group(1))
+                    cat.append({"nom": slug_en_nom(slug), "url": url, "code": m.group(2)})
+            cache_ecrire(cle, cat)
+        return cat
+
+    def rechercher(self, nom, limite=8):
+        res = [Candidat(self.nom, p["nom"], p["url"], p["code"], "", score_nom(nom, p["nom"])) for p in self.catalogue()]
+        return sorted([c for c in res if c.score >= 0.5], key=lambda c: -c.score)[:limite]
+
+    def _fiche(self, candidat):
+        """Options du Produit lues dans sa page : offre de référence, formule, villes et durées."""
+        cle = f"fiche_{hote(self.base)}_{candidat.code}"
+        fiche = cache_lire(cle, 24 * 3600)
+        if fiche is None:
+            html = self.get(candidat.url).text
+            debut = html.find("window.__INITIAL_STATE__")
+            etat = html[debut:debut + html[debut:].find("</script>")] if debut >= 0 else ""
+            paquet = re.search(r'idPackage: "(\d+)"', etat)
+            if not paquet:
+                raise RuntimeError("aucun calendrier de prix sur la page du Produit")
+            bloc_villes = re.search(r"departureCities: \[(.*?)\],\s*pensionTypes", etat, re.S)
+            villes = re.findall(r'label: "([^"]+)",\s*value: "([^"]+)"', bloc_villes.group(1)) if bloc_villes else []
+            pension = re.search(r'pensionTypes: \[\s*\{\s*label: "([^"]+)",\s*value: "([^"]+)"', etat)
+            nuits = sorted({int(n) for n in re.findall(r"label: '(\d+) nuit'", etat)})
+            fiche = {"idPackage": paquet.group(1),
+                     "villes": [{"libelle": l.strip(), "id": re.sub(r"\D", "", v)} for l, v in villes],
+                     "pension": pension.group(2) if pension else "", "pension_libelle": pension.group(1) if pension else "",
+                     "nuits": nuits}
+            cache_ecrire(cle, fiche)
+        return fiche
+
+    def villes(self, candidat):
+        res = {}
+        for v in self._fiche(candidat)["villes"]:
+            res.setdefault(_code_ville(v["libelle"], v["id"]), v["libelle"])
+        return res
+
+    def nuits(self, candidat, ville):
+        return self._fiche(candidat)["nuits"]
+
+    def _calendrier(self, candidat, ville, nuits):
+        cle = (candidat.code, ville, nuits)
+        memo = self._calendriers.get(cle)
+        if memo and time.time() - memo[0] < self.DUREE_MEMOIRE:
+            return memo[1]
+        fiche = self._fiche(candidat)
+        ident = next((v["id"] for v in fiche["villes"] if _code_ville(v["libelle"], v["id"]) == ville), None)
+        if ident is None:
+            return {}
+        r = self.get("/api/ajax/catalogueProduit/calendriers", headers={"Referer": candidat.url}, params={
+            "idVilleDepart": ident, "idPackage": fiche["idPackage"], "intervalleDureeNuit.min": nuits,
+            "intervalleDureeNuit.max": nuits, "codePension": fiche["pension"], "idHebergement": candidat.code})
+        r.raise_for_status()
+        data = r.json()
+        if data.get("status") != "S_OK":
+            data = {}
+        self._calendriers[cle] = (time.time(), data)
+        return data
+
+    def _departs(self, candidat, ville, nuits):
+        fiche = self._fiche(candidat)
+        for mois in self._calendrier(candidat, ville, nuits).get("moisAnnees") or []:
+            for jour in mois.get("dateDeparts") or []:
+                for c in jour.get("calendriers") or []:
+                    prix = c.get("prix") or {}
+                    if (c.get("disponible") and prix.get("prix") and prix.get("typePrix") == "PERSONNE"
+                            and (c.get("duree") or {}).get("nuit", {}).get("value") == nuits):
+                        yield {"date": jour["date"], "prix_eur": int(round(prix["prix"])),
+                               "meilleur_prix": bool(c.get("meilleurPrix")), "compagnie": "",
+                               "retour": ((c.get("periodeVoyage") or {}).get("fin") or {}).get("value", ""),
+                               "formule": fiche.get("pension_libelle", ""), "voyagiste": "Fram"}
+
+    def mois(self, candidat, ville, nuits):
+        return sorted({(int(d["date"][5:7]), int(d["date"][:4])) for d in self._departs(candidat, ville, nuits)},
+                      key=lambda m: (m[1], m[0]))
+
+    def prix(self, candidat, ville, nuits, mm, aaaa):
+        meilleurs = {}
+        for d in self._departs(candidat, ville, nuits):
+            if d["date"].startswith(f"{aaaa}-{mm:02d}") and (d["date"] not in meilleurs
+                                                              or d["prix_eur"] < meilleurs[d["date"]]["prix_eur"]):
+                meilleurs[d["date"]] = d  # plusieurs offres le même jour : on garde la moins chère
+        return [meilleurs[k] for k in sorted(meilleurs)]
+
+    def adresse_prix(self, candidat):
+        return f"{self.base}/api/ajax/catalogueProduit/calendriers"
+
+
 # ---------------------------------------------------------------- Relevé fait dans le navigateur (Promoséjours)
 
 DOSSIER_IMPORTS = os.path.join(DOSSIER, "imports")
@@ -422,11 +560,13 @@ class ImportNavigateur(Connecteur):
 
 # ---------------------------------------------------------------- Registre des sites
 
-PLATEFORMES = {c.plateforme: c for c in (PlateformeCalendrierJSON, PlateformeGrilleJSF, ImportNavigateur)}
+PLATEFORMES = {c.plateforme: c for c in (PlateformeCalendrierJSON, PlateformeGrilleJSF, PlateformeCatalogueFram,
+                                          ImportNavigateur)}
 
 SITES_INTEGRES = [
     {"nom": "Ovoyages", "base": "https://www.ovoyages.com", "plateforme": "calendrier-json"},
     {"nom": "Exotismes", "base": "https://www.exotismes.fr", "plateforme": "grille-jsf"},
+    {"nom": "Fram", "base": "https://www.fram.fr", "plateforme": "catalogue-fram"},
 ]
 
 
