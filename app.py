@@ -56,6 +56,8 @@ def memo(cle, fonction):
 
 
 AUCUNE = "Aucun départ"  # case de prix : le site ne propose pas de départ ce jour-là
+NON_RELEVE = "Non relevé"  # case de prix : le site n'a pas pu fournir ce mois (coupure, panne)
+INCOMPLET = "Incomplet"  # moins cher / écart : un des sites n'a pas pu être relevé ce mois-là
 UN_SEUL = "Un seul site"  # écart : il faut au moins deux sites avec un prix
 
 
@@ -65,6 +67,34 @@ def fmt_prix(x):
 
 def libelle_mois(m):
     return f"{MOIS_FR[m[0]]} {m[1]}"
+
+
+def raison_lisible(e):
+    """Explication en français d'une erreur réseau, au lieu du message technique."""
+    import requests
+    if isinstance(e, requests.Timeout):
+        return "le site n'a pas répondu à temps"
+    if isinstance(e, requests.ConnectionError):
+        return "le site a coupé la connexion sans répondre"
+    if isinstance(e, requests.HTTPError) and e.response is not None:
+        return f"le site a renvoyé une erreur (code {e.response.status_code})"
+    return "les prix n'ont pas pu être lus"
+
+
+def lire_prix_avec_essais(conn, c, ville, nuits, mm, aaaa, signaler=lambda n: None, essais=3):
+    """Les coupures d'un site sont souvent passagères : on réessaie avant d'abandonner le mois."""
+    for n in range(essais):
+        try:
+            return conn.prix(c, ville, nuits, mm, aaaa)
+        except Exception as e:
+            derniere = e
+            if n == essais - 1:
+                break
+            signaler(n + 1)
+            for memoire in ("_grilles", "_calendriers"):  # session du site à rouvrir proprement
+                getattr(conn, memoire, {}).clear()
+            time.sleep(5 * (n + 1))
+    raise derniere
 
 
 # ------------------------------------------------------------------ Panneau latéral : ajouter un site
@@ -328,22 +358,23 @@ if b1.button(f"Lancer le relevé (≈ {max(1, round(duree_estimee / 60))} min)",
             prix = C.cache_lire(cle, duree_cache) if duree_cache else None
             if prix is None:
                 try:
-                    prix = ss.connecteurs[s].prix(c, ville, nuits, mm, aaaa)
+                    prix = lire_prix_avec_essais(conn, c, ville, nuits, mm, aaaa,
+                                                 lambda n: barre.progress(k / etapes, text=f"{s} · "
+                                                     f"{libelle_mois((mm, aaaa))} : nouvelle tentative ({n}/2)…"))
                     C.cache_ecrire(cle, prix)
                     ages.append(0)
                 except Exception as e:
-                    erreurs.append(f"{s} · {libelle_mois((mm, aaaa))} : {e}")
+                    erreurs.append({"site": s, "mm": mm, "aaaa": aaaa, "raison": raison_lisible(e)})
                     prix = []
             else:
                 ages.append(C.cache_age(cle))
             lignes += [dict(p, site=s) for p in prix]
     barre.empty()
-    for e in erreurs:
-        st.warning(e)
     ss.releve = {"lignes": lignes, "sites": list(choix), "ville": ville, "libelle_ville": libelles[ville],
                  "nuits": nuits, "periode": periode, "produits": {s: c.libelle() for s, c in choix.items()},
                  # date du plus ancien prix affiché (les prix réutilisés sont plus anciens que le clic)
-                 "releve_le": time.time() - max(ages, default=0)}
+                 "releve_le": time.time() - max(ages, default=0),
+                 "echecs": erreurs}  # mois qu'un site n'a pas pu fournir : marqués « Non relevé »
 
 if "releve" not in ss:
     st.stop()
@@ -358,7 +389,8 @@ df["date"] = pd.to_datetime(df["date"])
 df["mm"], df["aaaa"] = df["date"].dt.month, df["date"].dt.year
 df["jour"] = df["date"].dt.weekday.map(lambda i: JOURS[i])
 df["semaine"] = df["date"].map(lambda d: ov.semaine_du_mois(d.date()))
-sites = [s for s in R["sites"] if s in set(df["site"])]
+echecs = {(e["site"], e["mm"], e["aaaa"]) for e in R.get("echecs", [])}
+sites = [s for s in R["sites"] if s in set(df["site"]) or any(e[0] == s for e in echecs)]
 
 st.divider()
 st.subheader("Filtres")
@@ -390,9 +422,15 @@ prix_sites = large[sites]
 large["mini"] = prix_sites.min(axis=1)
 large["ecart"] = prix_sites.max(axis=1) - large["mini"]
 large.loc[prix_sites.count(axis=1) < 2, "ecart"] = float("nan")
+# Mois qu'un site n'a pas pu fournir : ses cases vides valent « Non relevé », pas « Aucun départ »
+for s in sites:
+    large[f"{s}__echec"] = [(s, m, a) in echecs for m, a in zip(large["mm"], large["aaaa"])]
+large["incomplet"] = large[[f"{s}__echec" for s in sites]].any(axis=1) if sites else False
 
 
 def moins_cher(r):
+    if r["incomplet"]:
+        return INCOMPLET  # un site manque ce mois-là : impossible de dire qui est le moins cher
     dispo = {s: r[s] for s in sites if pd.notna(r[s])}
     if not dispo:
         return ""
@@ -446,6 +484,10 @@ releve_paris = datetime.fromtimestamp(R["releve_le"], PARIS)
 st.caption(f"Prix relevés le {releve_paris:%d/%m/%Y} à {releve_paris:%H:%M}"
            + (f" (il y a {age_min} min)" if age_min else " (à l'instant)")
            + ". Relancez le relevé pour actualiser.")
+for e in R.get("echecs", []):
+    st.warning(f"**{e['site']} · {libelle_mois((e['mm'], e['aaaa']))} : non relevé** — {e['raison']}, "
+               "même après plusieurs tentatives. Les cases concernées affichent « Non relevé ». "
+               "Relancez le relevé pour réessayer : les mois déjà relevés sont réutilisés, seul celui-ci sera redemandé.")
 m1, m2, m3 = st.columns(3)
 meilleur = large.loc[large["mini"].idxmin()]
 m1.metric("Prix le plus bas", fmt_prix(meilleur["mini"]),
@@ -470,12 +512,14 @@ with onglets[0]:
         # Le navigateur affiche « None » pour toute case vide, quel que soit le format demandé :
         # on envoie donc du texte déjà mis en forme, et on calcule le surlignage sur les vrais prix.
         nombres = vue.reset_index(drop=True)
+        echec_bloc = bloc.reset_index(drop=True)
         texte = nombres.copy()
         for col in sites:
-            texte[col] = nombres[col].map(fmt_prix)
+            texte[col] = [NON_RELEVE if pd.isna(x) and echec_bloc.loc[i, f"{col}__echec"] else fmt_prix(x)
+                          for i, x in enumerate(nombres[col])]
         if len(sites) > 1:
-            texte["Écart"] = nombres["Écart"].map(lambda x: UN_SEUL if pd.isna(x) else fmt_prix(x))
-        if len(sites) > 1:
+            texte["Écart"] = [fmt_prix(x) if pd.notna(x) else (INCOMPLET if echec_bloc.loc[i, "incomplet"] else UN_SEUL)
+                              for i, x in enumerate(nombres["Écart"])]
             texte["Moins cher"] = nombres["Moins cher"].replace("", AUCUNE)
 
         def surligner(ligne):
@@ -484,7 +528,9 @@ with onglets[0]:
             m = min(vals) if vals else None
             styles = []
             for c in ligne.index:
-                if ligne[c] in (AUCUNE, UN_SEUL):
+                if ligne[c] in (NON_RELEVE, INCOMPLET):
+                    styles.append("color: #B45309")  # orange : donnée manquante à cause d'une erreur
+                elif ligne[c] in (AUCUNE, UN_SEUL):
                     styles.append("color: #9AA5B1")
                 elif len(sites) > 1 and c in sites and pd.notna(n[c]) and n[c] == m:
                     styles.append(f"background-color: {VERT}; color: #0b0b0b; font-weight: 600")

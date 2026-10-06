@@ -35,7 +35,7 @@ Voir [Ajouter un site](#ajouter-un-site) et [Sites protégés](#sites-protégés
 - **Exports** : **Word** et **PDF**, au même format que les rapports, et **Excel**, avec 3 onglets (Synthèse, Comparatif filtrable, Détail).
 - **Ajout de sites** depuis l'application, après une analyse automatique.
 - **Sites protégés** : import des prix relevés dans votre navigateur avec l'extension « Relevé de prix ».
-- **Robustesse** : un site en panne est écarté avec un message, et les autres sont comparés normalement.
+- **Robustesse** : un site en panne est écarté avec un message, et les autres sont comparés normalement. Une coupure pendant le relevé est retentée automatiquement ; si elle persiste, le mois est marqué « Non relevé ».
 - **Cache des relevés** : un relevé récent est réutilisé pour ne pas interroger les sites inutilement. La durée est réglable.
 - **Date et heure du relevé** affichées partout, à l'heure de Paris.
 
@@ -117,6 +117,8 @@ Le serveur installe automatiquement `requirements.txt` (modules Python) et `pack
 | **Égalité** (colonne Moins cher) | Plusieurs sites affichent le même prix le plus bas |
 | **« Site » seul** (colonne Moins cher) | Seul ce site propose un départ ce jour-là |
 | **Non précisée** (Excel) | Le site ne fournit pas cette information (compagnie, formule…) |
+| **Non relevé** (en orange) | Le site n'a pas pu fournir ce mois, même après 3 tentatives (coupure, panne). Ce n'est **pas** une absence de départ |
+| **Incomplet** (Moins cher, Écart) | Un des sites n'a pas pu être relevé ce mois-là : la comparaison n'est pas possible |
 | **Site injoignable** / **« Site » est écarté** | Le site ne répond pas pour le moment. Les autres sites sont comparés normalement |
 
 Les prix sont **par personne, sur la base d'une chambre double**. Ils changent souvent, parfois en moins d'une heure. La date et l'heure du relevé (heure de Paris) figurent au-dessus des résultats et dans chaque export. Quand des prix réutilisés ou importés sont plus anciens, c'est la date des plus anciens qui est affichée.
@@ -214,6 +216,7 @@ Options communes : `--ville`, `--nuits`, `--debut` / `--fin` (format `MM-AAAA`),
 | L'adresse affichée est `localhost:8502` | Une autre copie de l'application tourne déjà : fermez-la, ou utilisez l'adresse affichée |
 | Les prix diffèrent de ceux du site | Vérifiez le **Produit** (référence), le **nombre de nuits** et la **ville** : le site affiche souvent d'autres réglages par défaut. Les prix changent aussi très vite : relancez le relevé avec « Jamais » |
 | « Site injoignable » ou « est écarté » | Le site ne répond pas pour le moment (panne ou surcharge). Réessayez plus tard ; les autres sites restent comparés |
+| « … : non relevé » au-dessus des résultats | Le site a coupé la connexion pour ce mois malgré 3 tentatives. Relancez le relevé : les mois déjà relevés sont réutilisés, seul le mois manquant est redemandé |
 | « Conversion impossible » pour le PDF | Microsoft Word (Windows) ou LibreOffice est nécessaire. Les exports Word et Excel restent disponibles |
 | Un site ajouté a disparu en ligne | Les sites ajoutés depuis le panneau s'effacent au redémarrage sur Streamlit Cloud : il faut l'intégrer au code (`SITES_INTEGRES`) |
 

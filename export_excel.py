@@ -24,6 +24,8 @@ FORMAT_EUR = '#,##0 "€"'
 FORMAT_DATE = "DD/MM/YYYY"
 AUCUNE = "Aucun départ"  # case de prix sans départ (texte : ignoré par COUNT, MIN, AVERAGE)
 UN_SEUL = "Un seul site"  # écart impossible : un seul site a un prix
+NON_RELEVE = "Non relevé"  # le site n'a pas pu fournir ce mois (coupure, panne)
+INCOMPLET = "Incomplet"  # un site n'a pas pu être relevé ce mois-là
 NON_PRECISEE = "Non précisée"
 EXTRAS_DETAIL = [("retour", "Date de retour"), ("formule", "Formule"), ("vol_direct", "Vol direct"),
                  ("voyagiste", "Voyagiste")]  # compagnie aérienne absente (le site ne l'indique pas)
@@ -73,12 +75,17 @@ def construire_xlsx(produit, sites, contexte, large, details, releve_le, nuits):
         _ecrire(comp, n, 5, int(nuits), centre=True)
         for k, s in enumerate(sites):
             prix = r[s]
-            c = _ecrire(comp, n, col0 + k, AUCUNE if prix != prix else int(prix), FORMAT_EUR)
+            manquant = prix != prix and r.get(f"{s}__echec") == True  # noqa: E712
+            vide = NON_RELEVE if manquant else AUCUNE
+            c = _ecrire(comp, n, col0 + k, vide if prix != prix else int(prix), FORMAT_EUR)
             if prix != prix:
-                c.font = Font(name=POLICE, color="9AA5B1")
+                c.font = Font(name=POLICE, color="B45309" if manquant else "9AA5B1")
             if r.get(f"{s}__mp") == True:  # noqa: E712 (la valeur peut être NaN)
                 c.comment = Comment("Meilleur prix du site", "Comparateur")
-        if plusieurs:
+        if plusieurs and r.get("incomplet") == True:  # noqa: E712 (un site manque : pas de comparaison)
+            _ecrire(comp, n, col_fin + 1, INCOMPLET, centre=True)
+            _ecrire(comp, n, col_fin + 2, INCOMPLET, centre=True)
+        elif plusieurs:
             plage = f"{l0}{n}:{lf}{n}"
             mini = f"MIN({plage})"
             nom_du_min = f"INDEX(${l0}$1:${lf}$1,MATCH({mini},{plage},0))"

@@ -16,6 +16,8 @@ from rapport_ovoyages import MOIS_FR, BLEU_FONCE, GRIS, ombrer, ecrire, ecrire_l
 VERT = "C6EFCE"
 AUCUNE = "Aucun départ"  # case de prix sans départ
 UN_SEUL = "Un seul site"  # écart impossible : un seul site a un prix
+NON_RELEVE = "Non relevé"  # le site n'a pas pu fournir ce mois (coupure, panne)
+INCOMPLET = "Incomplet"  # écart impossible : un site n'a pas pu être relevé ce mois-là
 
 
 def _figer(table, largeurs):
@@ -96,7 +98,8 @@ def construire_docx(produit, sites, contexte, large, synthese, releve_le):
             mini = min((x for x in prix if x == x), default=None)  # x == x : écarte les NaN
             for c, s, x in zip(cells[3:], sites, prix):
                 if x != x:
-                    ecrire(c, AUCUNE, couleur="9AA5B1", taille=8)
+                    manquant = r.get(f"{s}__echec") == True  # noqa: E712
+                    ecrire(c, NON_RELEVE if manquant else AUCUNE, couleur="B45309" if manquant else "9AA5B1", taille=8)
                     continue
                 ecrire(c, f"{int(x)} €", gras=True, taille=10)
                 if len(sites) > 1 and x == mini:
@@ -108,7 +111,8 @@ def construire_docx(produit, sites, contexte, large, synthese, releve_le):
                 if r["ecart"] == r["ecart"]:  # r["ecart"] != r["ecart"] signifie NaN
                     ecrire(cells[-1], f"{int(r['ecart'])} €", taille=9)
                 else:
-                    ecrire(cells[-1], UN_SEUL, couleur="9AA5B1", taille=8)
+                    ecrire(cells[-1], INCOMPLET if r.get("incomplet") == True else UN_SEUL,  # noqa: E712
+                           couleur="9AA5B1", taille=8)
         _figer(t, largeurs)
 
     tampon = io.BytesIO()
