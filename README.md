@@ -27,6 +27,7 @@ Voir [Ajouter un site](#ajouter-un-site) et [Sites protégés](#sites-protégés
 - **Recherche par nom de Produit** sur un ou plusieurs sites. Quand un site nomme le Produit autrement, la recherche est relancée avec le nom complet trouvé sur un autre site.
 - **Paramètres du relevé** : ville de départ, nombre de nuits et période. Seules les valeurs communes à tous les sites choisis sont proposées.
 - **Filtres instantanés** : jours de la semaine, semaines 1 à 6, compagnie aérienne, budget maximum, « Meilleur prix » uniquement, écart minimum entre sites.
+- **Comparer deux sites** au choix parmi 3 ou plus : l'« Écart » se calcule entre ces deux sites ; « Moins cher » reste le moins cher de la ligne.
 - **Résultats** :
   - comparatif par mois, avec le prix le plus bas surligné en vert ;
   - synthèse par site ;
@@ -105,6 +106,7 @@ Le serveur installe automatiquement `requirements.txt` (modules Python) et `pack
    - **Réutiliser un relevé de moins de** : 1 h par défaut. Choisissez « Jamais » pour relever tous les prix à neuf, par exemple juste avant d'envoyer un comparatif.
    - Cliquez sur **Lancer le relevé**. Comptez environ 4 secondes par mois et par site (Fram : un seul appel pour tous les mois).
 5. **Filtres** : ajustez jours, semaines, budget… L'affichage se met à jour sans nouvel appel aux sites.
+   - **Comparer deux sites** (à partir de 3 sites) : le sélecteur propose tous les sites, on peut en cocher **2 au maximum**. Une fois 2 sites cochés, la colonne **« Écart »** donne la différence de prix **entre ces deux sites** (son titre l'indique, par exemple « Écart (Ovoyages / Fram) »). La colonne **« Moins cher »**, le surlignage vert et la Synthèse restent, eux, **le moins cher de la ligne parmi tous les sites**. Sans choix, ou avec un seul site coché, l'Écart est le prix le plus haut − le prix le plus bas. Avec 2 sites seulement, il n'y a pas de sélecteur.
 6. **Export** : onglet « Export Word / PDF / Excel ». Les fichiers reprennent exactement les données et les filtres affichés.
 
 ### Lecture des tableaux
@@ -128,7 +130,7 @@ Les prix sont **par personne, sur la base d'une chambre double**. Ils changent s
 | Onglet | Contenu |
 |---|---|
 | **Synthèse** | Contexte du relevé (Produit, sites, départ, nuits, période, filtres, date), puis par site : dates avec prix, nombre de fois moins cher, prix moyen, prix le plus bas et sa date (formules Excel) |
-| **Comparatif** | Une ligne par date : mois, semaine, jour, date, nombre de nuits, prix de chaque site, moins cher et écart (formules), avec le prix le plus bas surligné en vert. Filtres Excel actifs |
+| **Comparatif** | Une ligne par date : mois, semaine, jour, date, nombre de nuits, prix de chaque site, moins cher et écart (formules ; l'écart suit les deux sites cochés le cas échéant), avec le prix le plus bas surligné en vert. Filtres Excel actifs |
 | **Détail** | Une ligne par site et par date : nombre de nuits, prix, « Meilleur prix », compagnie aérienne et, selon les sites, date de retour, formule, vol direct et voyagiste |
 
 ---

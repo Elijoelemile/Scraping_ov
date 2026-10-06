@@ -442,6 +442,23 @@ def moins_cher(r):
 
 
 large["moins_cher"] = large.apply(moins_cher, axis=1)
+
+# Avec 3 sites ou plus : on peut cocher 2 sites ; seul l'« Écart » porte alors sur ces deux sites.
+# « Moins cher » et le surlignage vert restent le moins cher de la ligne, parmi tous les sites.
+paire = None
+if len(sites) > 2:
+    coches = st.multiselect(
+        "Comparer deux sites", sites, max_selections=2, placeholder="Tous les sites",
+        help="Cochez 2 sites : la colonne « Écart » donnera la différence de prix entre ces deux sites. "
+             "« Moins cher » indique toujours le moins cher de la ligne, parmi tous les sites.")
+    paire = coches if len(coches) == 2 else None
+large["incomplet_ecart"] = large["incomplet"]  # un site manquant empêche de calculer l'écart
+if paire:
+    a, b = paire
+    large["ecart"] = (large[a] - large[b]).abs()
+    large["incomplet_ecart"] = large[f"{a}__echec"] | large[f"{b}__echec"]
+suffixe = f" ({paire[0]} / {paire[1]})" if paire else ""
+titre_mc, titre_ec = "Moins cher", f"Écart{suffixe}"
 if budget:
     large = large[large["mini"] <= budget]
 if seul_mp:
@@ -460,7 +477,8 @@ contexte = [f"Sites : {', '.join(sites)}",
             f"{libelle_mois(R['periode'][0])} à {libelle_mois(R['periode'][-1])}",
             f"Filtres : jours {', '.join(jours) or 'aucun'}"
             + (f" · budget ≤ {budget} €" if budget else "") + (" · « Meilleur prix » uniquement" if seul_mp else "")
-            + (f" · écart ≥ {ecart_min} €" if ecart_min else "")]
+            + (f" · écart ≥ {ecart_min} €" if ecart_min else ""),
+            *([f"Écart calculé entre {paire[0]} et {paire[1]}"] if paire else [])]
 
 # Synthèse par site
 lignes_synth = []
@@ -494,7 +512,7 @@ m1.metric("Prix le plus bas", fmt_prix(meilleur["mini"]),
           f"{meilleur['date']:%d/%m/%Y} · {meilleur['moins_cher'] or sites[0]}", delta_color="off")
 m2.metric("Dates affichées", len(large))
 if len(sites) > 1:
-    m3.metric("Écart moyen entre sites", fmt_prix(large["ecart"].mean()))
+    m3.metric(f"Écart moyen{suffixe}" if paire else "Écart moyen entre sites", fmt_prix(large["ecart"].mean()))
 
 onglets = st.tabs(["Comparatif par mois", "Synthèse", "Graphique", "Meilleures dates", "Export Word / PDF / Excel"])
 
@@ -506,8 +524,8 @@ with onglets[0]:
         for s in sites:
             vue[s] = bloc[s].values
         if len(sites) > 1:
-            vue["Moins cher"] = bloc["moins_cher"].values
-            vue["Écart"] = bloc["ecart"].values
+            vue[titre_mc] = bloc["moins_cher"].values
+            vue[titre_ec] = bloc["ecart"].values
 
         # Le navigateur affiche « None » pour toute case vide, quel que soit le format demandé :
         # on envoie donc du texte déjà mis en forme, et on calcule le surlignage sur les vrais prix.
@@ -518,9 +536,10 @@ with onglets[0]:
             texte[col] = [NON_RELEVE if pd.isna(x) and echec_bloc.loc[i, f"{col}__echec"] else fmt_prix(x)
                           for i, x in enumerate(nombres[col])]
         if len(sites) > 1:
-            texte["Écart"] = [fmt_prix(x) if pd.notna(x) else (INCOMPLET if echec_bloc.loc[i, "incomplet"] else UN_SEUL)
-                              for i, x in enumerate(nombres["Écart"])]
-            texte["Moins cher"] = nombres["Moins cher"].replace("", AUCUNE)
+            texte[titre_ec] = [fmt_prix(x) if pd.notna(x) else INCOMPLET if echec_bloc.loc[i, "incomplet_ecart"]
+                               else AUCUNE if paire and nombres.loc[i, paire].isna().all() else UN_SEUL
+                               for i, x in enumerate(nombres[titre_ec])]
+            texte[titre_mc] = nombres[titre_mc].replace("", AUCUNE)
 
         def surligner(ligne):
             n = nombres.loc[ligne.name]
@@ -544,7 +563,8 @@ with onglets[1]:
     st.dataframe(synthese, hide_index=True, use_container_width=True)
     if len(sites) > 1:
         st.caption(f"Égalités : {int((large['moins_cher'] == 'Égalité').sum())} date(s). "
-                   "« Moins cher » ne compte que les dates où au moins deux sites ont un prix.")
+                   "« Moins cher » ne compte que les dates où au moins deux sites ont un prix."
+)
 
 with onglets[2]:
     long = large.melt(id_vars=["date", "jour"], value_vars=sites, var_name="Site", value_name="Prix").dropna()
@@ -570,10 +590,10 @@ with onglets[3]:
 with onglets[4]:
     nom_fichier = "comparatif_" + "_".join(C.normaliser(ss.produit)) + f"_{date.today():%Y%m%d}"
     releve_le = datetime.fromtimestamp(R["releve_le"], PARIS)
-    docx = construire_docx(ss.produit, sites, contexte, large, synthese, releve_le)
+    docx = construire_docx(ss.produit, sites, contexte, large, synthese, releve_le, paire)
     # Détail Excel : les lignes brutes des dates affichées (mêmes filtres que le tableau)
     details = filtre[filtre["date"].isin(large["date"]) & filtre["site"].isin(sites)]
-    xlsx = construire_xlsx(ss.produit, sites, contexte, large, details, releve_le, R["nuits"])
+    xlsx = construire_xlsx(ss.produit, sites, contexte, large, details, releve_le, R["nuits"], paire)
     e1, e2, e3 = st.columns(3)
     e1.download_button("Télécharger en Word", docx, file_name=nom_fichier + ".docx",
                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",

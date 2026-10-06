@@ -49,7 +49,15 @@ def _ecrire(ws, ligne, col, valeur, fmt=None, gras=False, centre=False):
     return c
 
 
-def construire_xlsx(produit, sites, contexte, large, details, releve_le, nuits):
+def formule_moins_cher(plage, l0, lf):
+    """Nom du site le moins cher d'une ligne parmi tous les sites (ou « Égalité », « X seul », « Aucun départ »)."""
+    mini = f"MIN({plage})"
+    nom_du_min = f"INDEX(${l0}$1:${lf}$1,MATCH({mini},{plage},0))"
+    return (f'=IF(COUNT({plage})=0,"{AUCUNE}",IF(COUNT({plage})=1,{nom_du_min}&" seul",'
+            f'IF(COUNTIF({plage},{mini})>1,"Égalité",{nom_du_min})))')
+
+
+def construire_xlsx(produit, sites, contexte, large, details, releve_le, nuits, paire=None):
     """large : une ligne par date (colonnes date, mm, aaaa, jour, semaine, <site>, <site>__mp).
     details : lignes brutes filtrées (site, date, jour, semaine, prix_eur, meilleur_prix, compagnie)."""
     wb = Workbook()
@@ -60,7 +68,9 @@ def construire_xlsx(produit, sites, contexte, large, details, releve_le, nuits):
     plusieurs = len(sites) > 1
 
     # ---------------------------------------------------------- Comparatif
-    titres = ["Mois", "Semaine", "Jour", "Date", "Nombre de nuits"] + sites + (["Moins cher", "Écart"] if plusieurs else [])
+    suffixe = f" ({paire[0]} / {paire[1]})" if paire else ""
+    titres = ["Mois", "Semaine", "Jour", "Date", "Nombre de nuits"] + sites + \
+             (["Moins cher", f"Écart{suffixe}"] if plusieurs else [])
     _entete(comp, 1, titres)
     col0 = 6                                          # première colonne de prix (F)
     col_fin = col0 + len(sites) - 1
@@ -82,17 +92,23 @@ def construire_xlsx(produit, sites, contexte, large, details, releve_le, nuits):
                 c.font = Font(name=POLICE, color="B45309" if manquant else "9AA5B1")
             if r.get(f"{s}__mp") == True:  # noqa: E712 (la valeur peut être NaN)
                 c.comment = Comment("Meilleur prix du site", "Comparateur")
-        if plusieurs and r.get("incomplet") == True:  # noqa: E712 (un site manque : pas de comparaison)
-            _ecrire(comp, n, col_fin + 1, INCOMPLET, centre=True)
-            _ecrire(comp, n, col_fin + 2, INCOMPLET, centre=True)
-        elif plusieurs:
+        if plusieurs:
             plage = f"{l0}{n}:{lf}{n}"
-            mini = f"MIN({plage})"
-            nom_du_min = f"INDEX(${l0}$1:${lf}$1,MATCH({mini},{plage},0))"
-            _ecrire(comp, n, col_fin + 1,
-                    f'=IF(COUNT({plage})=0,"{AUCUNE}",IF(COUNT({plage})=1,{nom_du_min}&" seul",'
-                    f'IF(COUNTIF({plage},{mini})>1,"Égalité",{nom_du_min})))', centre=True)
-            _ecrire(comp, n, col_fin + 2, f'=IF(COUNT({plage})=0,"{AUCUNE}",IF(COUNT({plage})=1,"{UN_SEUL}",MAX({plage})-{mini}))', FORMAT_EUR)
+            # « Moins cher » : toujours le moins cher de la ligne, parmi tous les sites
+            if any(r.get(f"{x}__echec") == True for x in sites):  # noqa: E712 (un site manque)
+                _ecrire(comp, n, col_fin + 1, INCOMPLET, centre=True)
+            else:
+                _ecrire(comp, n, col_fin + 1, formule_moins_cher(plage, l0, lf), centre=True)
+            # « Écart » : entre les deux sites cochés, sinon plus cher − moins cher
+            if r.get("incomplet_ecart", r.get("incomplet")) == True:  # noqa: E712
+                _ecrire(comp, n, col_fin + 2, INCOMPLET, centre=True)
+            elif paire:
+                a, b = (f"{get_column_letter(col0 + sites.index(s))}{n}" for s in paire)
+                _ecrire(comp, n, col_fin + 2, f'=IF(AND(ISNUMBER({a}),ISNUMBER({b})),ABS({a}-{b}),'
+                        f'IF(OR(ISNUMBER({a}),ISNUMBER({b})),"{UN_SEUL}","{AUCUNE}"))', FORMAT_EUR)
+            else:
+                _ecrire(comp, n, col_fin + 2, f'=IF(COUNT({plage})=0,"{AUCUNE}",IF(COUNT({plage})=1,"{UN_SEUL}",'
+                        f'MAX({plage})-MIN({plage})))', FORMAT_EUR)
     derniere = len(lignes) + 1
     if plusieurs and derniere >= 2:
         comp.conditional_formatting.add(
@@ -102,7 +118,8 @@ def construire_xlsx(produit, sites, contexte, large, details, releve_le, nuits):
                         fill=PatternFill("solid", fgColor=VERT, bgColor=VERT), font=Font(name=POLICE, bold=True)))
     comp.freeze_panes = "F2"
     comp.auto_filter.ref = f"A1:{get_column_letter(len(titres))}{derniere}"
-    for j, largeur in enumerate([16, 12, 8, 12, 10] + [14] * len(sites) + ([18, 10] if plusieurs else []), start=1):
+    for j, largeur in enumerate([16, 12, 8, 12, 10] + [14] * len(sites)
+                                + ([18, max(10, len(suffixe) + 8)] if plusieurs else []), start=1):
         comp.column_dimensions[get_column_letter(j)].width = largeur
 
     # ---------------------------------------------------------- Synthèse
@@ -113,13 +130,14 @@ def construire_xlsx(produit, sites, contexte, large, details, releve_le, nuits):
              "les tarifs évoluent en continu."]
     if plusieurs:
         infos.append("Onglet Comparatif : le prix le plus bas de chaque date est surligné en vert ; "
-                     "Écart = prix le plus haut − prix le plus bas parmi les sites.")
+                     + (f"Écart = différence de prix entre {paire[0]} et {paire[1]}." if paire else
+                        "Écart = prix le plus haut − prix le plus bas parmi les sites."))
     for i, texte in enumerate(infos, start=2):
         _ecrire(synth, i, 1, texte, gras=(i == 2))
     t = len(infos) + 3
     _entete(synth, t, ["Site", "Dates avec prix", "Moins cher (nb dates)", "Prix moyen", "Prix le plus bas",
                        "Date du prix le plus bas"])
-    col_mc = get_column_letter(col_fin + 1)
+    col_mc = get_column_letter(col_fin + 1)  # colonne « Moins cher » (tous les sites)
     for k, s in enumerate(sites):
         n, lettre = t + 1 + k, get_column_letter(col0 + k)
         plage = f"Comparatif!${lettre}$2:${lettre}${max(derniere, 2)}"

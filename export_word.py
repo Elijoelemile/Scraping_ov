@@ -31,9 +31,12 @@ def _figer(table, largeurs):
                     p.paragraph_format.keep_with_next = True
 
 
-def construire_docx(produit, sites, contexte, large, synthese, releve_le):
+def construire_docx(produit, sites, contexte, large, synthese, releve_le, paire=None):
     """large : DataFrame (une ligne par date) avec colonnes mois, semaine, jour, date, <site>…, moins_cher, ecart,
-    et <site>__mp (meilleur prix). synthese : DataFrame par site."""
+    et <site>__mp (meilleur prix). synthese : DataFrame par site.
+    paire : 2 sites choisis ; seul l'« Écart » porte alors sur ces deux sites (« Moins cher » et le surlignage
+    restent le moins cher de la ligne, parmi tous les sites)."""
+    suffixe = f" ({paire[0]} / {paire[1]})" if paire else ""
     doc = Document()
     sec = doc.sections[0]
     sec.left_margin = sec.right_margin = Cm(1.6)
@@ -50,8 +53,10 @@ def construire_docx(produit, sites, contexte, large, synthese, releve_le):
               "les tarifs évoluent en continu.")
     if len(sites) > 1:
         doc.add_paragraph().add_run(
-            "Le prix le plus bas de chaque date est surligné en vert. Écart = prix le plus haut − prix le plus bas "
-            "parmi les sites. Une semaine correspond à une ligne du calendrier (du lundi au dimanche).").italic = True
+            "Le prix le plus bas de chaque date est surligné en vert. "
+            + (f"Écart = différence de prix entre {paire[0]} et {paire[1]}. " if paire else
+               "Écart = prix le plus haut − prix le plus bas parmi les sites. ")
+            + "Une semaine correspond à une ligne du calendrier (du lundi au dimanche).").italic = True
 
     # Synthèse
     doc.add_heading("Synthèse", level=1)
@@ -69,7 +74,7 @@ def construire_docx(produit, sites, contexte, large, synthese, releve_le):
     _figer(t, [Cm(17.8 / len(cols))] * len(cols))
 
     # Un tableau par mois
-    entetes = ["Semaine", "Jour", "Date"] + sites + (["Moins cher", "Écart"] if len(sites) > 1 else [])
+    entetes = ["Semaine", "Jour", "Date"] + sites + (["Moins cher", f"Écart{suffixe}"] if len(sites) > 1 else [])
     reste = 17.8 - 2.2 - 1.6 - 1.6 - (2.6 + 1.8 if len(sites) > 1 else 0)
     largeurs = [Cm(2.2), Cm(1.6), Cm(1.6)] + [Cm(reste / len(sites))] * len(sites) + \
                ([Cm(2.6), Cm(1.8)] if len(sites) > 1 else [])
@@ -111,8 +116,9 @@ def construire_docx(produit, sites, contexte, large, synthese, releve_le):
                 if r["ecart"] == r["ecart"]:  # r["ecart"] != r["ecart"] signifie NaN
                     ecrire(cells[-1], f"{int(r['ecart'])} €", taille=9)
                 else:
-                    ecrire(cells[-1], INCOMPLET if r.get("incomplet") == True else UN_SEUL,  # noqa: E712
-                           couleur="9AA5B1", taille=8)
+                    aucun = paire and all(r[s] != r[s] for s in paire)  # aucun des deux sites n'a de départ
+                    ecrire(cells[-1], INCOMPLET if r.get("incomplet_ecart", r.get("incomplet")) == True  # noqa: E712
+                           else AUCUNE if aucun else UN_SEUL, couleur="9AA5B1", taille=8)
         _figer(t, largeurs)
 
     tampon = io.BytesIO()
