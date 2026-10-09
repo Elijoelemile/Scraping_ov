@@ -104,6 +104,7 @@ def hote(url):
 
 class Connecteur:
     plateforme = ""
+    type_site = "forfait"  # « forfait » (vol + hôtel) ou « hotel_seul » : deux types qu'on ne compare pas entre eux
 
     def __init__(self, nom, base):
         self.nom, self.base = nom, base.rstrip("/")
@@ -438,6 +439,146 @@ class PlateformeCatalogueFram(Connecteur):
         return f"{self.base}/api/ajax/catalogueProduit/calendriers"
 
 
+# ---------------------------------------------------------------- Hôtel seul : Pick Albatros
+
+VILLE_HOTEL_SEUL = "HOTEL"  # pas de ville de départ : l'hôtel seul se réserve sans vol
+
+
+def taux_usd():
+    """Taux de change officiel de la Banque centrale européenne : (dollars pour 1 €, date du taux)."""
+    taux = cache_lire("taux_bce_usd", 12 * 3600)
+    if taux is None:
+        xml = requests.get("https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml",
+                           headers={"User-Agent": UA}, timeout=DELAI).text
+        taux = {"usd": float(re.search(r"currency='USD' rate='([\d.]+)'", xml).group(1)),
+                "date": re.search(r"time='([\d-]+)'", xml).group(1)}
+        cache_ecrire("taux_bce_usd", taux)
+    return taux["usd"], taux["date"]
+
+
+def _montant(texte):
+    """« $ 1,273.50 » -> 1273.5"""
+    m = re.search(r"\d[\d,]*(?:\.\d+)?", texte or "")
+    return float(m.group().replace(",", "")) if m else None
+
+
+class PlateformePickAlbatros(Connecteur):
+    """Site d'hôtels (sans vol) : hôtels Pickalbatros, prix par chambre et par nuit en dollars, lus dans le
+    calendrier de tarifs du moteur de réservation (TravelClick / Amadeus). Les prix renvoyés sont convertis
+    en euros (taux BCE) et donnés par personne : prix de la chambre pour le séjour ÷ 2 (base chambre double)."""
+    plateforme = "hotel-seul-albatros"
+    type_site = "hotel_seul"
+    NUITS = list(range(1, 22))
+    DUREE_MEMOIRE = 120  # s : un calendrier lu sert pour tous les mois d'un même relevé
+
+    def __init__(self, nom, base):
+        super().__init__(nom, base)
+        self._calendriers, self._relais = {}, None
+
+    @staticmethod
+    def reconnaitre(accueil_html, produit_html):
+        return False  # site intégré à l'application, jamais ajouté par l'analyse automatique
+
+    def catalogue(self):
+        """Les hôtels et leur numéro de réservation : chaque lien TravelClick de l'accueil redirige
+        vers la page de réservation de l'hôtel (/<hôtel>/book/dates-of-stay)."""
+        cat = cache_lire(f"catalogue_{hote(self.base)}", 7 * 24 * 3600)
+        if cat is None:
+            accueil = self.get("/fr").text
+            cat = []
+            for ident in sorted(set(re.findall(r"reservations\.travelclick\.com/(\d+)", accueil))):
+                url = ""
+                for _ in range(2):  # un lien lent ne doit pas faire échouer tout le catalogue
+                    try:
+                        url = self.get(f"https://reservations.travelclick.com/{ident}?", allow_redirects=True).url
+                        break
+                    except requests.RequestException:
+                        continue
+                m = re.search(r"pickalbatros\.com/([a-z0-9-]+)/book/", url)
+                if m:
+                    cat.append({"nom": "Pickalbatros " + slug_en_nom(m.group(1)), "code": ident,
+                                "url": f"{self.base}/{m.group(1)}", "slug": m.group(1)})
+            cache_ecrire(f"catalogue_{hote(self.base)}", cat)
+        return cat
+
+    def rechercher(self, nom, limite=8):
+        res = [Candidat(self.nom, p["nom"], p["url"], p["code"], "Hôtel seul", score_nom(nom, p["nom"]))
+               for p in self.catalogue()]
+        return sorted([c for c in res if c.score >= 0.5], key=lambda c: -c.score)[:limite]
+
+    def villes(self, candidat):
+        return {VILLE_HOTEL_SEUL: "Hôtel seul (sans vol)"}
+
+    def nuits(self, candidat, ville):
+        return self.NUITS
+
+    def _relais_prix(self, candidat):
+        """Adresse et clé publique du relais de prix, écrites dans la page de réservation (comme pour tout visiteur)."""
+        if self._relais is None:
+            html = self.get(f"{candidat.url}/book/dates-of-stay").text
+            url = re.search(r"""proxy_url['"]?\s*:\s*['"]([^'"]+)""", html)
+            cle = re.search(r"""proxy_key['"]?\s*:\s*['"]([^'"]+)""", html)
+            if not (url and cle):
+                raise RuntimeError("calendrier de tarifs introuvable")
+            self._relais = (url.group(1).rstrip("/"), cle.group(1), f"{candidat.url}/book/dates-of-stay")
+        return self._relais
+
+    def _tarifs_nuit(self, candidat, debut):
+        """{date: prix de la chambre pour la nuit, en dollars} sur 91 jours à partir de debut."""
+        cle = (candidat.code, debut)
+        memo = self._calendriers.get(cle)
+        if memo and time.time() - memo[0] < self.DUREE_MEMOIRE:
+            return memo[1]
+        url, cle_publique, page = self._relais_prix(candidat)
+        r = self.get(f"{url}/tc/shop/v1/hotel/{candidat.code}/calendar", params={"dateIn": debut, "lang": "fr"},
+                     headers={"X-Galaxy-Key": cle_publique, "Referer": page, "Accept": "application/json"})
+        r.raise_for_status()
+        tarifs = {}
+        for jour in r.json() or []:
+            montant = _montant(jour.get("rate_discounted") or jour.get("rate"))
+            if jour.get("is_available") and montant and "$" in (jour.get("rate_discounted") or jour.get("rate") or ""):
+                tarifs[jour["date"]] = montant
+        self._calendriers[cle] = (time.time(), tarifs)
+        return tarifs
+
+    def _sejours(self, candidat, nuits, mm, aaaa):
+        """Prix de chaque arrivée du mois pour `nuits` nuits : toutes les nuits doivent être disponibles."""
+        from datetime import date, timedelta
+        premier = max(date(aaaa, mm, 1), date.today())
+        dernier = date(aaaa, mm, calendar.monthrange(aaaa, mm)[1])
+        if premier > dernier:
+            return []
+        tarifs = self._tarifs_nuit(candidat, premier.isoformat())  # 91 jours : couvre le mois et le séjour
+        usd, _ = taux_usd()
+        res = []
+        d = premier
+        while d <= dernier:
+            nuits_sejour = [(d + timedelta(days=k)).isoformat() for k in range(nuits)]
+            if all(n in tarifs for n in nuits_sejour):
+                chambre_usd = sum(tarifs[n] for n in nuits_sejour)
+                res.append({"date": d.isoformat(), "prix_eur": int(round(chambre_usd / usd / 2)),
+                            "meilleur_prix": False, "compagnie": "",
+                            "retour": (d + timedelta(days=nuits)).isoformat(), "voyagiste": "Pick Albatros"})
+            d += timedelta(days=1)
+        return res
+
+    def mois(self, candidat, ville, nuits):
+        """Mois qui ont au moins une arrivée possible, dans les 12 prochains mois."""
+        res = []
+        for mm, aaaa in mois_suivants(12):
+            if self._sejours(candidat, nuits, mm, aaaa):
+                res.append((mm, aaaa))
+            elif res:  # le calendrier ne va pas plus loin
+                break
+        return res
+
+    def prix(self, candidat, ville, nuits, mm, aaaa):
+        return self._sejours(candidat, nuits, mm, aaaa)
+
+    def adresse_prix(self, candidat):
+        return f"{self.base}/tc/shop/v1/hotel/{candidat.code}/calendar"
+
+
 # ---------------------------------------------------------------- Relevé fait dans le navigateur (Promoséjours)
 
 DOSSIER_IMPORTS = os.path.join(DOSSIER, "imports")
@@ -561,12 +702,13 @@ class ImportNavigateur(Connecteur):
 # ---------------------------------------------------------------- Registre des sites
 
 PLATEFORMES = {c.plateforme: c for c in (PlateformeCalendrierJSON, PlateformeGrilleJSF, PlateformeCatalogueFram,
-                                          ImportNavigateur)}
+                                          PlateformePickAlbatros, ImportNavigateur)}
 
 SITES_INTEGRES = [
     {"nom": "Ovoyages", "base": "https://www.ovoyages.com", "plateforme": "calendrier-json"},
     {"nom": "Exotismes", "base": "https://www.exotismes.fr", "plateforme": "grille-jsf"},
     {"nom": "Fram", "base": "https://www.fram.fr", "plateforme": "catalogue-fram"},
+    {"nom": "Pick Albatros", "base": "https://www.pickalbatros.com", "plateforme": "hotel-seul-albatros"},
 ]
 
 
@@ -629,6 +771,11 @@ def retirer_a_etudier(base):
 def sites_configures():
     """{nom: configuration} : sites intégrés puis sites ajoutés depuis l'application."""
     return {s["nom"]: s for s in SITES_INTEGRES + sites_ajoutes()}
+
+
+def type_site(conf):
+    """« forfait » (vol + hôtel) ou « hotel_seul »."""
+    return PLATEFORMES[conf["plateforme"]].type_site
 
 
 def creer_connecteur(conf):

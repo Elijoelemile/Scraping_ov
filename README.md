@@ -13,10 +13,21 @@ Elle reprend le calendrier de prix des sites : chaque ligne du calendrier (du lu
 | **Ovoyages** | Relevé automatique | « Meilleur prix » |
 | **Exotismes** | Relevé automatique | « Meilleur prix », compagnie aérienne |
 | **Fram** | Relevé automatique | « Meilleur prix », date de retour, formule |
+| **Pick Albatros** | Relevé automatique, **hôtel seul (sans vol)** : tarifs affichés sans comparaison | Date de retour ; prix convertis de dollars en euros |
 | **Promoséjours** | Relevé fait dans votre navigateur (extension), puis importé | « Meilleur prix du mois », date de retour, formule, vol direct, voyagiste |
 | Autres sites | Ajoutés depuis l'application s'ils remplissent les critères | Selon la plateforme |
 
 Voir [Ajouter un site](#ajouter-un-site) et [Sites protégés](#sites-protégés--relevé-dans-le-navigateur-promoséjours).
+
+> **Sites « hôtel seul »** (Pick Albatros) : ils vendent l'hôtel sans le vol, et leurs prix ne se comparent donc pas aux forfaits vol + hôtel. On ne mélange jamais les deux types :
+>
+> | Sites choisis dans le champ **Site** | Note sous le champ | Résultat |
+> |---|---|---|
+> | **Un seul** site hôtel seul (Pick Albatros) | Note expliquant qu'il s'agit d'un site hôtel seul | Ses tarifs **sans comparaison** |
+> | **Plusieurs** sites hôtel seul | Aucune note | Comparés **entre eux**, comme les forfaits |
+> | Hôtel seul **et** forfaits | Avertissement | Bouton **Rechercher désactivé** : retirez les sites de forfaits |
+>
+> Les exports Word, PDF et Excel restent disponibles dans tous les cas. Pour Pick Albatros, les prix (par chambre et par nuit, en dollars) sont convertis en euros au taux de la Banque centrale européenne du jour, et donnés **par personne** : prix de la chambre pour le séjour ÷ 2 (base chambre double). Le taux utilisé est indiqué au-dessus des résultats et dans les exports. Il n'y a pas de ville de départ (« Hôtel seul, sans vol ») ; le premier chargement de la liste des hôtels Albatros prend environ 2 minutes, puis elle est gardée 7 jours.
 
 > Un même Produit peut être vendu par plusieurs sites sous des noms et des références différents. Par exemple, Ovoyages semble revendre des séjours Fram : pour certaines dates, les prix sont identiques.
 
@@ -162,6 +173,7 @@ Un connecteur correspond à une **plateforme de réservation**, c'est-à-dire au
 | `calendrier-json` | Ovoyages | Produits listés dans le plan du site ; prix via `/pricetable/…`, un appel par mois |
 | `grille-jsf` | Exotismes (.fr, .be) | Recherche par mots-clés du site ; prix via la grille `/reservation/grilles.jsf`, un appel par mois |
 | `catalogue-fram` | Fram | Produits listés dans le plan du site ; options dans la page Produit ; prix via `/api/ajax/catalogueProduit/calendriers`, tous les mois en un appel |
+| `hotel-seul-albatros` | Pick Albatros | Hôtels listés à partir des liens de réservation du site ; prix par nuit via le calendrier de tarifs du moteur TravelClick (91 jours par appel), convertis en euros |
 | `import-navigateur` | Promoséjours | Prix importés depuis l'extension de navigateur, sans aucune requête de l'application |
 
 **Écrire une plateforme** : créer dans `connecteurs.py` une classe qui hérite de `Connecteur`, implémenter `reconnaitre()`, `rechercher()`, `villes()`, `nuits()`, `mois()`, `prix()` et `adresse_prix()`, puis l'ajouter au dictionnaire `PLATEFORMES`. Pour qu'un site soit **toujours** présent, y compris en ligne, l'ajouter aussi à `SITES_INTEGRES`.
@@ -220,6 +232,7 @@ Options communes : `--ville`, `--nuits`, `--debut` / `--fin` (format `MM-AAAA`),
 | « Site injoignable » ou « est écarté » | Le site ne répond pas pour le moment (panne ou surcharge). Réessayez plus tard ; les autres sites restent comparés |
 | « … : non relevé » au-dessus des résultats | Le site a coupé la connexion pour ce mois malgré 3 tentatives. Relancez le relevé : les mois déjà relevés sont réutilisés, seul le mois manquant est redemandé |
 | « Conversion impossible » pour le PDF | Microsoft Word (Windows) ou LibreOffice est nécessaire. Les exports Word et Excel restent disponibles |
+| Erreur « removeChild … n'est pas un enfant de ce nœud », ou textes de l'application traduits (ex. « Choisir des albatros ») | La **traduction automatique** du navigateur (ou une extension qui modifie les pages : correcteur, traducteur…) perturbe l'application. L'application demande déjà à ne pas être traduite : rechargez avec **Ctrl + F5**, choisissez « Afficher l'original » / « Ne jamais traduire ce site », ou essayez une fenêtre de navigation privée |
 | Un site ajouté a disparu en ligne | Les sites ajoutés depuis le panneau s'effacent au redémarrage sur Streamlit Cloud : il faut l'intégrer au code (`SITES_INTEGRES`) |
 
 ---

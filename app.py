@@ -36,6 +36,20 @@ DUREES_CACHE = {0: "Jamais (toujours relever)", 15 * 60: "15 min", 30 * 60: "30 
 ICONES = {A.OK: "✅", A.KO: "❌", A.ALERTE: "⚠️"}
 
 st.set_page_config(page_title="Comparateur de prix", page_icon="📊", layout="wide")
+# La traduction automatique du navigateur modifie la page à l'insu de Streamlit et provoque des erreurs
+# (« removeChild … n'est pas un enfant de ce nœud ») : la page, déjà en français, est déclarée non traduisible.
+st.components.v1.html(
+    """<script>
+    const d = window.parent.document;
+    d.documentElement.lang = "fr";
+    d.documentElement.setAttribute("translate", "no");
+    d.documentElement.classList.add("notranslate");
+    if (!d.querySelector('meta[name="google"]')) {
+        const m = d.createElement("meta"); m.name = "google"; m.content = "notranslate"; d.head.appendChild(m);
+    }
+    </script>""",
+    height=0,
+)
 ss = st.session_state
 ss.setdefault("connecteurs", {})
 ss.setdefault("candidats", {})
@@ -67,6 +81,15 @@ def fmt_prix(x):
 
 def libelle_mois(m):
     return f"{MOIS_FR[m[0]]} {m[1]}"
+
+
+def note_hotel_seul():
+    """Explication des prix « hôtel seul » : sans vol, convertis de dollars en euros, par personne."""
+    usd, date_taux = C.taux_usd()
+    return ("Hôtel seul, sans vol : tarifs sans comparaison. Prix convertis de dollars en euros au taux de la "
+            f"Banque centrale européenne du {date_taux[8:]}/{date_taux[5:7]}/{date_taux[:4]} (1 € = "
+            f"{str(usd).replace('.', ',')} $) ; prix par personne = prix de la chambre pour le séjour ÷ 2 "
+            "(base chambre double).")
 
 
 def raison_lisible(e):
@@ -189,15 +212,31 @@ with st.sidebar:
 st.title("Comparateur de prix")
 st.caption("Recherchez un Produit par son nom sur un ou plusieurs sites, puis comparez les tarifs date par date.")
 
-with st.form("recherche"):
-    c1, c2, c3 = st.columns([3, 3, 1])
-    produit = c1.text_input("Produit", value=ss.get("produit", ""), placeholder="ex. Coral Level, Bavaro Suites…")
-    defaut = [s for s in ss.get("sites", [s["nom"] for s in C.SITES_INTEGRES]) if s in SITES]
-    sites_choisis = c2.multiselect("Site", list(SITES), default=defaut,
-                                   help="Pour ajouter un site à cette liste : « Ajouter un site », dans le panneau de gauche.")
-    c3.write("")
-    c3.write("")
-    lancer_recherche = c3.form_submit_button("Rechercher", type="primary", use_container_width=True)
+c1, c2, c3 = st.columns([3, 3, 1])
+produit = c1.text_input("Produit", value=ss.get("produit", ""), placeholder="ex. Coral Level, Bavaro Suites…")
+# Par défaut : les sites de forfaits (vol + hôtel) intégrés à l'application
+forfaits_defaut = [s["nom"] for s in C.SITES_INTEGRES if C.type_site(s) == "forfait"]
+defaut = [s for s in ss.get("sites", forfaits_defaut) if s in SITES]
+sites_choisis = c2.multiselect("Site", list(SITES), default=defaut,
+                               help="Pour ajouter un site à cette liste : « Ajouter un site », dans le panneau de gauche.")
+# Un site « hôtel seul » (sans vol) ne se compare pas aux forfaits vol + hôtel : on ne mélange pas les deux types
+hotel_seul_choisis = [s for s in sites_choisis if C.type_site(SITES[s]) == "hotel_seul"]
+melange = bool(hotel_seul_choisis) and len(hotel_seul_choisis) < len(sites_choisis)
+c3.write("")
+c3.write("")
+lancer_recherche = c3.button("Rechercher", type="primary", use_container_width=True, disabled=melange)
+plusieurs_hotels = len(hotel_seul_choisis) > 1
+if melange:  # hôtel seul + forfaits : recherche impossible, on explique pourquoi
+    noms = " et ".join(hotel_seul_choisis)
+    st.warning(f"**{noms}** {'sont des sites' if plusieurs_hotels else 'est un site'} « hôtel seul » : uniquement "
+               f"l'hôtel, **sans vol**. {'Leurs' if plusieurs_hotels else 'Ses'} prix ne se comparent pas aux forfaits "
+               "vol + hôtel des autres sites : choisissez **uniquement des sites « hôtel seul »**. "
+               "Retirez les sites de forfaits pour lancer la recherche.")
+elif len(hotel_seul_choisis) == 1:  # un seul site hôtel seul : ses tarifs, sans comparaison
+    st.info(f"**{hotel_seul_choisis[0]}** est un site « hôtel seul » : uniquement l'hôtel, **sans vol**. Ses prix ne "
+            "se comparent pas aux forfaits vol + hôtel des autres sites : choisissez **uniquement des sites « hôtel "
+            "seul »**. Ses tarifs s'affichent alors **sans comparaison**.")
+# Plusieurs sites « hôtel seul » seuls : ils se comparent entre eux, aucune note
 
 if lancer_recherche:
     if not produit.strip() or not sites_choisis:
@@ -306,8 +345,13 @@ if not communes:
     st.stop()
 
 p1, p2, p3 = st.columns([2, 1, 3])
-villes_triees = sorted(communes, key=lambda c: (c != "PAR", libelles[c]))
-ville = p1.selectbox("Ville de départ", villes_triees, format_func=lambda c: f"{libelles[c]} ({c})")
+mode_hotel_seul = all(C.type_site(SITES[s]) == "hotel_seul" for s in choix)
+if mode_hotel_seul:  # pas de vol, donc pas de ville de départ
+    ville = C.VILLE_HOTEL_SEUL
+    p1.markdown("**Départ**  \nHôtel seul, sans vol")
+else:
+    villes_triees = sorted(communes, key=lambda c: (c != "PAR", libelles[c]))
+    ville = p1.selectbox("Ville de départ", villes_triees, format_func=lambda c: f"{libelles[c]} ({c})")
 
 quoi_cle = (ville,)
 with st.spinner("Lecture des durées proposées…"):
@@ -371,6 +415,7 @@ if b1.button(f"Lancer le relevé (≈ {max(1, round(duree_estimee / 60))} min)",
             lignes += [dict(p, site=s) for p in prix]
     barre.empty()
     ss.releve = {"lignes": lignes, "sites": list(choix), "ville": ville, "libelle_ville": libelles[ville],
+                 "hotel_seul": mode_hotel_seul,
                  "nuits": nuits, "periode": periode, "produits": {s: c.libelle() for s, c in choix.items()},
                  # date du plus ancien prix affiché (les prix réutilisés sont plus anciens que le clic)
                  "releve_le": time.time() - max(ages, default=0),
@@ -478,7 +523,8 @@ contexte = [f"Sites : {', '.join(sites)}",
             f"Filtres : jours {', '.join(jours) or 'aucun'}"
             + (f" · budget ≤ {budget} €" if budget else "") + (" · « Meilleur prix » uniquement" if seul_mp else "")
             + (f" · écart ≥ {ecart_min} €" if ecart_min else ""),
-            *([f"Écart calculé entre {paire[0]} et {paire[1]}"] if paire else [])]
+            *([f"Écart calculé entre {paire[0]} et {paire[1]}"] if paire else []),
+            *([note_hotel_seul()] if R.get("hotel_seul") else [])]
 
 # Synthèse par site
 lignes_synth = []
@@ -502,6 +548,8 @@ releve_paris = datetime.fromtimestamp(R["releve_le"], PARIS)
 st.caption(f"Prix relevés le {releve_paris:%d/%m/%Y} à {releve_paris:%H:%M}"
            + (f" (il y a {age_min} min)" if age_min else " (à l'instant)")
            + ". Relancez le relevé pour actualiser.")
+if R.get("hotel_seul"):
+    st.info(note_hotel_seul())
 for e in R.get("echecs", []):
     st.warning(f"**{e['site']} · {libelle_mois((e['mm'], e['aaaa']))} : non relevé** — {e['raison']}, "
                "même après plusieurs tentatives. Les cases concernées affichent « Non relevé ». "
@@ -593,6 +641,8 @@ with onglets[4]:
     docx = construire_docx(ss.produit, sites, contexte, large, synthese, releve_le, paire)
     # Détail Excel : les lignes brutes des dates affichées (mêmes filtres que le tableau)
     details = filtre[filtre["date"].isin(large["date"]) & filtre["site"].isin(sites)]
+    if R.get("hotel_seul"):  # hôtel seul : pas de compagnie aérienne, puisqu'il n'y a pas de vol
+        details = details.assign(compagnie="Sans vol")
     xlsx = construire_xlsx(ss.produit, sites, contexte, large, details, releve_le, R["nuits"], paire)
     e1, e2, e3 = st.columns(3)
     e1.download_button("Télécharger en Word", docx, file_name=nom_fichier + ".docx",
