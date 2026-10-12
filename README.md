@@ -113,6 +113,7 @@ Le serveur installe automatiquement `requirements.txt` (modules Python) et `pack
 3. **Vérifiez le Produit trouvé** sur chaque site. Le lien « Voir la page du Produit » ouvre la page exacte sur le site.
    - Un même nom peut correspondre à plusieurs références, avec des prix différents. Par exemple, Ovoyages a 3 références pour le Bávaro Suites (108505, 235436, 235539), et Fram aussi (79150, 49891, 77807).
    - Si le bon Produit n'apparaît pas, utilisez « Le bon Produit n'est pas là ? » pour chercher un autre nom sur ce site.
+   - **Produit introuvable sur ce site** : quand un site ne propose que des hôtels différents (par exemple Ovoyages pour le Framissima Premium Kalima), il est **retiré de la comparaison**. Il ne limite donc pas les durées, villes et mois des autres sites. Les hôtels approchants restent consultables dans « Choisir quand même un Produit approchant ».
 4. **Paramètres** : choisissez la ville de départ, le nombre de nuits et la période.
    - **Réutiliser un relevé de moins de** : 1 h par défaut. Choisissez « Jamais » pour relever tous les prix à neuf, par exemple juste avant d'envoyer un comparatif.
    - Cliquez sur **Lancer le relevé**. Comptez environ 4 secondes par mois et par site (Fram : un seul appel pour tous les mois).
@@ -228,6 +229,7 @@ Options communes : `--ville`, `--nuits`, `--debut` / `--fin` (format `MM-AAAA`),
 | Le terminal affiche `streamlit run yourscript.py` | Lancez l'application avec `lancer_app.bat`, le bouton ▷ de VS Code ou `python -m streamlit run app.py` |
 | `lancer_app.bat` « n'est pas reconnu » dans PowerShell | Tapez `.\lancer_app.bat`, ou double-cliquez dessus dans l'Explorateur Windows |
 | L'adresse affichée est `localhost:8502` | Une autre copie de l'application tourne déjà : fermez-la, ou utilisez l'adresse affichée |
+| Peu de durées proposées (ex. seulement 5 et 6 nuits) | Les durées affichées sont celles **communes à tous les sites choisis**. Vérifiez le Produit retenu sur chaque site, ou lancez la recherche sur moins de sites |
 | Les prix diffèrent de ceux du site | Vérifiez le **Produit** (référence), le **nombre de nuits** et la **ville** : le site affiche souvent d'autres réglages par défaut. Les prix changent aussi très vite : relancez le relevé avec « Jamais » |
 | « Site injoignable » ou « est écarté » | Le site ne répond pas pour le moment (panne ou surcharge). Réessayez plus tard ; les autres sites restent comparés |
 | « … : non relevé » au-dessus des résultats | Le site a coupé la connexion pour ce mois malgré 3 tentatives. Relancez le relevé : les mois déjà relevés sont réutilisés, seul le mois manquant est redemandé |

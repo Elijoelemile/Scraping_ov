@@ -34,6 +34,9 @@ VERT = "#C6EFCE"
 # Durée pendant laquelle un relevé est réutilisé au lieu d'interroger de nouveau les sites
 DUREES_CACHE = {0: "Jamais (toujours relever)", 15 * 60: "15 min", 30 * 60: "30 min", 3600: "1 h", 3 * 3600: "3 h"}
 ICONES = {A.OK: "✅", A.KO: "❌", A.ALERTE: "⚠️"}
+# Ressemblance minimale entre le nom cherché et un Produit pour le retenir d'office (1 = tous les mots trouvés).
+# En dessous, le site ne vend sans doute pas ce Produit : il est retiré de la comparaison.
+SEUIL_PRODUIT = 0.75
 
 st.set_page_config(page_title="Comparateur de prix", page_icon="📊", layout="wide")
 # La traduction automatique du navigateur modifie la page à l'insu de Streamlit et provoque des erreurs
@@ -90,6 +93,17 @@ def note_hotel_seul():
             f"Banque centrale européenne du {date_taux[8:]}/{date_taux[5:7]}/{date_taux[:4]} (1 € = "
             f"{str(usd).replace('.', ',')} $) ; prix par personne = prix de la chambre pour le séjour ÷ 2 "
             "(base chambre double).")
+
+
+def score_avec_reference(c, reference):
+    """Ressemblance d'un candidat avec le nom complet du Produit trouvé sur un autre site.
+    Un site peut nommer le Produit plus court (« Iberostar Selection Coral Bavaro » pour « Coral Level at Iberostar
+    Selection Bavaro ») : s'il a au moins 3 mots et que TOUS figurent dans la référence, il est jugé ressemblant."""
+    score = max(c.score, C.score_nom(reference, c.nom))
+    mots, ref = C.normaliser(c.nom), C.normaliser(reference)
+    if len(mots) >= 3 and all(any(x == m or x.startswith(m) for x in ref) for m in mots):
+        score = max(score, C.score_nom(c.nom, reference))
+    return score
 
 
 def raison_lisible(e):
@@ -264,8 +278,10 @@ if lancer_recherche:
                         except Exception:
                             extra = []
                         codes = {c.code for c in trouves[s]}
-                        trouves[s] = sorted(trouves[s] + [c for c in extra if c.code not in codes],
-                                            key=lambda c: -C.score_nom(reference, c.nom))
+                        trouves[s] = trouves[s] + [c for c in extra if c.code not in codes]
+                        for c in trouves[s]:  # tous les candidats, y compris ceux de la première recherche
+                            c.score = score_avec_reference(c, reference)
+                        trouves[s].sort(key=lambda c: -c.score)
         ss.candidats = {s: [C.candidat_en_dict(c) for c in lst] for s, lst in trouves.items()}
 
 if not ss.candidats:
@@ -286,19 +302,35 @@ for col, (s, lst) in zip(colonnes, ss.candidats.items()):
             st.warning("Aucun Produit trouvé sur ce site.")
         else:
             cands = [C.candidat_depuis_dict(d) for d in lst]
-            i = st.selectbox("Produit trouvé", range(len(cands)), format_func=lambda k, c=cands: c[k].libelle(),
-                             key=f"choix_{s}", label_visibility="collapsed")
-            choix[s] = cands[i]
-            st.caption(f"[Voir la page du Produit]({cands[i].url})")
+            meilleur = max(range(len(cands)), key=lambda k: cands[k].score)
+            if cands[meilleur].score >= SEUIL_PRODUIT:
+                i = st.selectbox("Produit trouvé", range(len(cands)), index=meilleur,
+                                 format_func=lambda k, c=cands: c[k].libelle(),
+                                 key=f"choix_{s}", label_visibility="collapsed")
+                choix[s] = cands[i]
+                st.caption(f"[Voir la page du Produit]({cands[i].url})")
+            else:
+                # Seuls des hôtels différents ressemblent au nom cherché : le site ne vend sans doute pas ce Produit.
+                # Il est retiré de la comparaison, pour ne pas limiter les durées, villes et mois des autres sites.
+                st.warning("Produit introuvable sur ce site : il est retiré de la comparaison.")
+                with st.expander("Choisir quand même un Produit approchant"):
+                    i = st.selectbox("Produit approchant", [None, *range(len(cands))],
+                                     format_func=lambda k, c=cands: "— Ne pas comparer ce site —" if k is None
+                                     else c[k].libelle(), key=f"approchant_{s}", label_visibility="collapsed")
+                    if i is not None:
+                        choix[s] = cands[i]
+                        st.caption(f"[Voir la page du Produit]({cands[i].url})")
         with st.expander("Le bon Produit n'est pas là ?"):
             autre = st.text_input("Chercher un autre nom sur ce site", key=f"autre_{s}")
             if st.button("Chercher", key=f"btn_autre_{s}") and autre.strip():
                 with st.spinner("Recherche…"):
                     ss.candidats[s] = [C.candidat_en_dict(c) for c in ss.connecteurs[s].rechercher(autre)]
                 ss.pop(f"choix_{s}", None)
+                ss.pop(f"approchant_{s}", None)
                 st.rerun()
 
 if not choix:
+    st.info("Aucun site ne propose ce Produit. Vérifiez son nom, ou utilisez « Le bon Produit n'est pas là ? ».")
     st.stop()
 
 # ------------------------------------------------------------------ 3. Paramètres du relevé
