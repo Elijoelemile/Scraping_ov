@@ -108,7 +108,7 @@ Le serveur installe automatiquement `requirements.txt` (modules Python) et `pack
 
 ## Utilisation
 
-1. **Produit** : tapez un nom, par exemple `coral level` ou `bavaro suites`.
+1. **Produit** : tapez un nom, par exemple `coral level` ou `bavaro suites`. La recherche tolère une faute de frappe sur un mot long (« galeria » / « galleria ») et ignore les étoiles (« 3* ») ainsi que les mots « Hôtel » et « Club ».
 2. **Site** : choisissez un ou plusieurs sites, puis cliquez sur **Rechercher**.
 3. **Vérifiez le Produit trouvé** sur chaque site. Le lien « Voir la page du Produit » ouvre la page exacte sur le site.
    - Un même nom peut correspondre à plusieurs références, avec des prix différents. Par exemple, Ovoyages a 3 références pour le Bávaro Suites (108505, 235436, 235539), et Fram aussi (79150, 49891, 77807).

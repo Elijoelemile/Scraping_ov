@@ -52,7 +52,8 @@ class Candidat:
 
 # ---------------------------------------------------------------- outils communs
 
-MOTS_VIDES = {"hotel", "hôtel", "the", "at", "by", "de", "la", "le", "les", "et", "a", "en", "sejour", "voyage"}
+# « club » : les sites l'ajoutent ou l'omettent selon les cas (« Club Jumbo Palm Galleria » / « Jumbo Palm Galleria »)
+MOTS_VIDES = {"hotel", "hôtel", "the", "at", "by", "de", "la", "le", "les", "et", "a", "en", "sejour", "voyage", "club"}
 
 
 def normaliser(texte):
@@ -60,12 +61,20 @@ def normaliser(texte):
     return [m for m in re.findall(r"[a-z0-9]+", texte) if m not in MOTS_VIDES]
 
 
+def mot_correspond(m, x):
+    """Un mot cherché correspond à un mot du nom : identique, début du mot, ou une faute de frappe sur un mot
+    d'au moins 5 lettres (« galeria » / « galleria »)."""
+    return x == m or x.startswith(m) or (len(m) >= 5 and difflib.SequenceMatcher(None, m, x).ratio() >= 0.85)
+
+
 def score_nom(requete, nom):
-    """1.0 = tous les mots de la requête sont dans le nom ; départage par ressemblance globale."""
+    """1.0 = tous les mots de la requête sont dans le nom ; départage par ressemblance globale.
+    Les étoiles (« 3* », « 5 ») ne comptent pas : les sites les écrivent rarement dans le nom."""
     q, n = normaliser(requete), normaliser(nom)
+    q = [m for m in q if not (len(m) == 1 and m.isdigit())] or q
     if not q:
         return 0.0
-    trouves = sum(1 for m in q if any(x == m or x.startswith(m) for x in n))
+    trouves = sum(1 for m in q if any(mot_correspond(m, x) for x in n))
     ressemblance = difflib.SequenceMatcher(None, " ".join(q), " ".join(n)).ratio()
     return trouves / len(q) + 0.2 * ressemblance
 

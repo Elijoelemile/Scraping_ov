@@ -101,7 +101,7 @@ def score_avec_reference(c, reference):
     Selection Bavaro ») : s'il a au moins 3 mots et que TOUS figurent dans la référence, il est jugé ressemblant."""
     score = max(c.score, C.score_nom(reference, c.nom))
     mots, ref = C.normaliser(c.nom), C.normaliser(reference)
-    if len(mots) >= 3 and all(any(x == m or x.startswith(m) for x in ref) for m in mots):
+    if len(mots) >= 3 and all(any(C.mot_correspond(m, x) for x in ref) for m in mots):
         score = max(score, C.score_nom(c.nom, reference))
     return score
 
