@@ -12,7 +12,8 @@ Elle reprend le calendrier de prix des sites : chaque ligne du calendrier (du lu
 |---|---|---|
 | **Ovoyages** | Relevé automatique | « Meilleur prix » |
 | **Exotismes** | Relevé automatique | « Meilleur prix », compagnie aérienne |
-| **Fram** | Relevé automatique | « Meilleur prix », date de retour, formule |
+| **Fram** | Relevé automatique, Produits classiques et **forfaits dynamiques** | « Meilleur prix », date de retour, formule |
+| **Voyamar** | Relevé automatique (1 485 Produits : séjours, circuits, croisières) | Date de retour, formule, vol direct |
 | **Pick Albatros** | Relevé automatique, **hôtel seul (sans vol)** : tarifs affichés sans comparaison | Date de retour ; prix convertis de dollars en euros |
 | **Promoséjours** | Relevé fait dans votre navigateur (extension), puis importé | « Meilleur prix du mois », date de retour, formule, vol direct, voyagiste |
 | Autres sites | Ajoutés depuis l'application s'ils remplissent les critères | Selon la plateforme |
@@ -28,6 +29,8 @@ Voir [Ajouter un site](#ajouter-un-site) et [Sites protégés](#sites-protégés
 > | Hôtel seul **et** forfaits | Avertissement | Bouton **Rechercher désactivé** : retirez les sites de forfaits |
 >
 > Les exports Word, PDF et Excel restent disponibles dans tous les cas. Pour Pick Albatros, les prix (par chambre et par nuit, en dollars) sont convertis en euros au taux de la Banque centrale européenne du jour, et donnés **par personne** : prix de la chambre pour le séjour ÷ 2 (base chambre double). Le taux utilisé est indiqué au-dessus des résultats et dans les exports. Il n'y a pas de ville de départ (« Hôtel seul, sans vol ») ; le premier chargement de la liste des hôtels Albatros prend environ 2 minutes, puis elle est gardée 7 jours.
+
+> **Voyamar** : la liste des Produits est lue page par page sur le site ; le premier chargement prend environ 4 minutes, puis elle est gardée 7 jours. Chaque Produit n'a qu'une formule (indiquée, sans sélecteur). Le départ « Sans transport » (hôtel sans le vol) n'est pas proposé, car il ne se compare pas aux forfaits. Voyamar ne vend pas la République dominicaine.
 
 > Un même Produit peut être vendu par plusieurs sites sous des noms et des références différents. Par exemple, Ovoyages semble revendre des séjours Fram : pour certaines dates, les prix sont identiques.
 
@@ -101,7 +104,7 @@ Le serveur installe automatiquement `requirements.txt` (modules Python) et `pack
 
 À savoir en ligne :
 - **Accès** : l'application est publique par défaut. Limitez-la aux personnes invitées dans **Share** pour éviter que n'importe qui lance des relevés.
-- **Données éphémères** : le cache, les sites ajoutés depuis le panneau, les sites à étudier et les relevés importés sont **effacés à chaque redémarrage** du serveur. Seuls les sites intégrés au code (Ovoyages, Exotismes, Fram) restent toujours disponibles.
+- **Données éphémères** : le cache, les sites ajoutés depuis le panneau, les sites à étudier et les relevés importés sont **effacés à chaque redémarrage** du serveur. Seuls les sites intégrés au code (Ovoyages, Exotismes, Fram, Pick Albatros, Voyamar) restent toujours disponibles.
 - **Adresse des requêtes** : les relevés partent des serveurs de Streamlit. Un site qui bloque les adresses de serveurs peut être refusé en ligne alors qu'il fonctionne en local.
 
 ---
@@ -114,9 +117,11 @@ Le serveur installe automatiquement `requirements.txt` (modules Python) et `pack
    - Un même nom peut correspondre à plusieurs références, avec des prix différents. Par exemple, Ovoyages a 3 références pour le Bávaro Suites (108505, 235436, 235539), et Fram aussi (79150, 49891, 77807).
    - Si le bon Produit n'apparaît pas, utilisez « Le bon Produit n'est pas là ? » pour chercher un autre nom sur ce site.
    - **Produit introuvable sur ce site** : quand un site ne propose que des hôtels différents (par exemple Ovoyages pour le Framissima Premium Kalima), il est **retiré de la comparaison**. Il ne limite donc pas les durées, villes et mois des autres sites. Les hôtels approchants restent consultables dans « Choisir quand même un Produit approchant ».
+   - **Mot le plus rare** : l'application compte, dans les catalogues des sites (environ 27 000 noms de Produits), combien de Produits contiennent chaque mot du nom cherché. Le mot le plus rare est celui qui désigne le mieux l'hôtel : dans « Iberostar Selection Kantaoui Bay », c'est « Kantaoui » (21 Produits, contre plus de 300 pour « Iberostar » ou « Bay »). Un Produit qui ne contient pas ce mot n'est jamais retenu d'office, même si les autres mots correspondent. Sans cette règle, Fram associait le Kantaoui Bay (Tunisie) au Rose Hall Suites (Jamaïque). Une petite faute de frappe reste tolérée. Attention : si vous ajoutez au nom un mot que le site n'utilise pas (« Thalasso »…), c'est souvent lui le plus rare, et le bon hôtel est alors refusé ; choisissez-le dans « Produit approchant » ou retirez ce mot.
 4. **Paramètres** : choisissez la ville de départ, le nombre de nuits et la période.
+   - **Formule** : All Inclusive est choisi d'office quand il existe (sinon la formule présélectionnée par le site). Si le Produit propose plusieurs formules (forfaits dynamiques de Fram), un sélecteur « Formule » permet d'en changer ; sinon, la formule utilisée est simplement indiquée. Elle figure aussi dans le résumé du relevé et dans les exports.
    - **Réutiliser un relevé de moins de** : 1 h par défaut. Choisissez « Jamais » pour relever tous les prix à neuf, par exemple juste avant d'envoyer un comparatif.
-   - Cliquez sur **Lancer le relevé**. Comptez environ 4 secondes par mois et par site (Fram : un seul appel pour tous les mois).
+   - Cliquez sur **Lancer le relevé**. Comptez environ 4 secondes par mois et par site (Fram et Voyamar : un seul appel pour tous les mois).
 5. **Filtres** : ajustez jours, semaines, budget… L'affichage se met à jour sans nouvel appel aux sites.
    - **Comparer deux sites** (à partir de 3 sites) : le sélecteur propose tous les sites, on peut en cocher **2 au maximum**. Une fois 2 sites cochés, la colonne **« Écart »** donne la différence de prix **entre ces deux sites** (son titre l'indique, par exemple « Écart (Ovoyages / Fram) »). La colonne **« Moins cher »**, le surlignage vert et la Synthèse restent, eux, **le moins cher de la ligne parmi tous les sites**. Sans choix, ou avec un seul site coché, l'Écart est le prix le plus haut − le prix le plus bas. Avec 2 sites seulement, il n'y a pas de sélecteur.
 6. **Export** : onglet « Export Word / PDF / Excel ». Les fichiers reprennent exactement les données et les filtres affichés.
@@ -173,8 +178,9 @@ Un connecteur correspond à une **plateforme de réservation**, c'est-à-dire au
 |---|---|---|
 | `calendrier-json` | Ovoyages | Produits listés dans le plan du site ; prix via `/pricetable/…`, un appel par mois |
 | `grille-jsf` | Exotismes (.fr, .be) | Recherche par mots-clés du site ; prix via la grille `/reservation/grilles.jsf`, un appel par mois |
-| `catalogue-fram` | Fram | Produits listés dans le plan du site ; options dans la page Produit ; prix via `/api/ajax/catalogueProduit/calendriers`, tous les mois en un appel |
+| `catalogue-fram` | Fram | Produits listés dans le plan du site, classiques (`…-76450.html`) et forfaits dynamiques (`…-dp100152.html`) ; options dans la page Produit ou, pour les forfaits dynamiques, via `/api/ajax/catalogueProduit/calendriersCritere` ; prix via `/api/ajax/catalogueProduit/calendriers`, tous les mois en un appel, pour la formule choisie |
 | `hotel-seul-albatros` | Pick Albatros | Hôtels listés à partir des liens de réservation du site ; prix par nuit via le calendrier de tarifs du moteur TravelClick (91 jours par appel), convertis en euros |
+| `orchestra` | Voyamar | Produits listés par la page de résultats `/ajax/serp` (48 par page) ; villes, durées, formule et prix de tous les mois en un appel via `/ajax/bookingEngine/<n° du Produit>`. Les autres sites construits sur la plateforme Orchestra sont reconnus par « Ajouter un site » |
 | `import-navigateur` | Promoséjours | Prix importés depuis l'extension de navigateur, sans aucune requête de l'application |
 
 **Écrire une plateforme** : créer dans `connecteurs.py` une classe qui hérite de `Connecteur`, implémenter `reconnaitre()`, `rechercher()`, `villes()`, `nuits()`, `mois()`, `prix()` et `adresse_prix()`, puis l'ajouter au dictionnaire `PLATEFORMES`. Pour qu'un site soit **toujours** présent, y compris en ligne, l'ajouter aussi à `SITES_INTEGRES`.
@@ -244,7 +250,7 @@ Options communes : `--ville`, `--nuits`, `--debut` / `--fin` (format `MM-AAAA`),
 | Fichier | Rôle |
 |---|---|
 | `app.py` | Application Streamlit (interface, filtres, résultats, ajout de sites, import navigateur) |
-| `connecteurs.py` | Plateformes (Ovoyages, Exotismes, Fram, import navigateur), registre des sites, cache |
+| `connecteurs.py` | Plateformes (Ovoyages, Exotismes, Fram, Pick Albatros, Voyamar, import navigateur), registre des sites, cache |
 | `analyse_site.py` | Analyse d'un site avant son ajout |
 | `export_word.py` | Export Word et conversion PDF (Microsoft Word ou LibreOffice) |
 | `export_excel.py` | Export Excel (Synthèse, Comparatif, Détail) |
@@ -270,5 +276,5 @@ Options communes : `--ville`, `--nuits`, `--debut` / `--fin` (format `MM-AAAA`),
 
 - **Discrétion** : l'application attend environ 3 secondes entre deux requêtes vers un même site et réutilise les relevés récents. Évitez de réduire la pause ou de lancer des relevés en boucle.
 - **Sites protégés** : l'application ne contourne aucune protection anti-robot. Un site bloqué n'est pas ajouté automatiquement ; ses prix peuvent être relevés à la main avec l'extension de navigateur.
-- **`robots.txt`** : certains sites demandent aux robots de ne pas lire leurs pages de prix (c'est le cas d'Ovoyages et d'Exotismes, pas de Fram). L'application le signale, et c'est à l'utilisateur de décider de l'usage qu'il en fait.
+- **`robots.txt`** : certains sites demandent aux robots de ne pas lire leurs pages de prix (c'est le cas d'Ovoyages et d'Exotismes, pas de Fram ; Voyamar n'a pas de robots.txt). L'application le signale, et c'est à l'utilisateur de décider de l'usage qu'il en fait.
 - **Fiabilité** : si un site modifie son fonctionnement, son connecteur peut cesser de marcher. Le relevé affiche alors un avertissement pour le site concerné, sans bloquer les autres.

@@ -67,16 +67,65 @@ def mot_correspond(m, x):
     return x == m or x.startswith(m) or (len(m) >= 5 and difflib.SequenceMatcher(None, m, x).ratio() >= 0.85)
 
 
+SCORE_SANS_MOT_RARE = 0.7  # plafond quand le mot le plus rare manque : sous le seuil « Produit trouvé » de l'application
+_vocabulaire = {"signature": None, "mots": {}, "memo": {}, "vu": 0.0}
+
+
+def _frequences():
+    """{mot: nombre de noms de Produits qui le contiennent}, sur tous les catalogues de sites en cache."""
+    if time.time() - _vocabulaire["vu"] < 5:  # appelé pour chaque Produit d'un catalogue : on ne relit pas le dossier
+        return _vocabulaire
+    _vocabulaire["vu"] = time.time()
+    fichiers = sorted(f for f in os.listdir(DOSSIER_CACHE) if f.startswith("catalogue") and f.endswith(".json"))
+    signature = tuple((f, os.path.getmtime(os.path.join(DOSSIER_CACHE, f))) for f in fichiers)
+    if signature != _vocabulaire["signature"]:
+        mots = {}
+        for f in fichiers:
+            try:
+                with open(os.path.join(DOSSIER_CACHE, f), encoding="utf-8") as fh:
+                    produits = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            for p in produits if isinstance(produits, list) else []:
+                for m in set(normaliser(p.get("nom", ""))):
+                    mots[m] = mots.get(m, 0) + 1
+        _vocabulaire.update(signature=signature, mots=mots, memo={})
+    return _vocabulaire
+
+
+def frequence_mot(m):
+    """Nombre de noms de Produits (tous sites) où l'on retrouve ce mot, fautes de frappe comprises."""
+    voc = _frequences()
+    if m not in voc["memo"]:
+        voc["memo"][m] = sum(n for x, n in voc["mots"].items() if mot_correspond(m, x))
+    return voc["memo"][m]
+
+
+def mot_rare(mots):
+    """Le mot le plus rare de la liste : celui qui désigne le mieux l'hôtel (« Kantaoui » dans
+    « Iberostar Selection Kantaoui Bay »). À égalité, le plus long. None si aucun catalogue n'est chargé."""
+    if not mots or not _frequences()["mots"]:
+        return None
+    return min(mots, key=lambda m: (frequence_mot(m), -len(m)))
+
+
 def score_nom(requete, nom):
     """1.0 = tous les mots de la requête sont dans le nom ; départage par ressemblance globale.
-    Les étoiles (« 3* », « 5 ») ne comptent pas : les sites les écrivent rarement dans le nom."""
+    Les étoiles (« 3* », « 5 ») ne comptent pas : les sites les écrivent rarement dans le nom.
+    Si le mot le plus rare de la requête manque, le score est plafonné : le Produit n'est plus retenu
+    d'office (il reste proposé parmi les Produits approchants)."""
     q, n = normaliser(requete), normaliser(nom)
     q = [m for m in q if not (len(m) == 1 and m.isdigit())] or q
     if not q:
         return 0.0
     trouves = sum(1 for m in q if any(mot_correspond(m, x) for x in n))
     ressemblance = difflib.SequenceMatcher(None, " ".join(q), " ".join(n)).ratio()
-    return trouves / len(q) + 0.2 * ressemblance
+    score = trouves / len(q) + 0.2 * ressemblance
+    if len(q) > 1 and score > SCORE_SANS_MOT_RARE:
+        rare = mot_rare(q)
+        if rare and not any(mot_correspond(rare, x) for x in n):
+            score = SCORE_SANS_MOT_RARE
+    return score
 
 
 def slug_en_nom(slug):
@@ -338,17 +387,22 @@ class PlateformeCatalogueFram(Connecteur):
     plateforme = "catalogue-fram"
     DUREE_MEMOIRE = 120  # s : un calendrier lu sert pour tous les mois d'un même relevé
 
+    FORMULE_PREFEREE = "AI"  # All Inclusive par défaut quand il existe : la formule habituelle des comparatifs
+
     def __init__(self, nom, base):
         super().__init__(nom, base)
         self.session.headers["Accept"] = "application/json, text/plain, */*"
         self._calendriers = {}
+        self.formules_choisies = {}  # code du Produit -> code de formule choisi dans l'application
 
     @staticmethod
     def reconnaitre(accueil_html, produit_html):
         return "__INITIAL_STATE__" in produit_html and "departureMonths" in produit_html and "disponibilities" in produit_html
 
     def catalogue(self):
-        cle = f"catalogue_{hote(self.base)}"
+        """Produits du plan du site : Produits classiques (…-76450.html) et forfaits dynamiques (…-dp100152.html),
+        dont le vol et l'hôtel sont assemblés à la demande (code « dp… »)."""
+        cle = f"catalogue_v2_{hote(self.base)}"
         cat = cache_lire(cle, 24 * 3600)
         if cat is None:
             index = self.get("/sitemap.xml").text
@@ -358,10 +412,10 @@ class PlateformeCatalogueFram(Connecteur):
                 urls += re.findall(r"<loc>([^<]+)</loc>", self.get(s, timeout=(10, 90)).text)
             cat = []
             for url in urls:
-                m = re.search(r"/([^/]+)-(\d+)\.html$", url)
+                m = re.search(r"/([^/]+)-(dp)?(\d+)\.html$", url)
                 if m:
                     slug = re.sub(r"^(hotel|club|circuit|sejour|autotour|croisiere)-", "", m.group(1))
-                    cat.append({"nom": slug_en_nom(slug), "url": url, "code": m.group(2)})
+                    cat.append({"nom": slug_en_nom(slug), "url": url, "code": (m.group(2) or "") + m.group(3)})
             cache_ecrire(cle, cat)
         return cat
 
@@ -370,48 +424,94 @@ class PlateformeCatalogueFram(Connecteur):
         return sorted([c for c in res if c.score >= 0.5], key=lambda c: -c.score)[:limite]
 
     def _fiche(self, candidat):
-        """Options du Produit lues dans sa page : offre de référence, formule, villes et durées."""
-        cle = f"fiche_{hote(self.base)}_{candidat.code}"
+        """Options du Produit : offre de référence, formules, villes et durées.
+        Produit classique : lues dans les données de sa page. Forfait dynamique (« dp… ») : la page ne donne que
+        l'offre (« Réf : … ») ; villes, formules et durées viennent de /api/ajax/catalogueProduit/calendriersCritere."""
+        cle = f"fiche_v2_{hote(self.base)}_{candidat.code}"
         fiche = cache_lire(cle, 24 * 3600)
         if fiche is None:
             html = self.get(candidat.url).text
             debut = html.find("window.__INITIAL_STATE__")
             etat = html[debut:debut + html[debut:].find("</script>")] if debut >= 0 else ""
-            paquet = re.search(r'idPackage: "(\d+)"', etat)
-            if not paquet:
-                raise RuntimeError("aucun calendrier de prix sur la page du Produit")
-            bloc_villes = re.search(r"departureCities: \[(.*?)\],\s*pensionTypes", etat, re.S)
-            villes = re.findall(r'label: "([^"]+)",\s*value: "([^"]+)"', bloc_villes.group(1)) if bloc_villes else []
-            pension = re.search(r'pensionTypes: \[\s*\{\s*label: "([^"]+)",\s*value: "([^"]+)"', etat)
-            nuits = sorted({int(n) for n in re.findall(r"label: '(\d+) nuit'", etat)})
-            fiche = {"idPackage": paquet.group(1),
-                     "villes": [{"libelle": l.strip(), "id": re.sub(r"\D", "", v)} for l, v in villes],
-                     "pension": pension.group(2) if pension else "", "pension_libelle": pension.group(1) if pension else "",
-                     "nuits": nuits}
+            if candidat.code.startswith("dp"):
+                offre = re.search(r'offerId\s*:\s*"(\d+)"', etat) or re.search(r"Réf\s*:\s*(\d{8,})", html)
+                if not offre:
+                    raise RuntimeError("offre introuvable sur la page du Produit")
+                crit = self.get("/api/ajax/catalogueProduit/calendriersCritere", params={"idPackage": offre.group(1)},
+                                headers={"Referer": candidat.url}).json()
+                if crit.get("status") != "S_OK":
+                    raise RuntimeError("aucun calendrier de prix pour ce Produit")
+                fiche = {"dynamique": True, "idPackage": offre.group(1),
+                         "villes": [{"libelle": v["libelle"], "code": v["codeVilleDepart"]}
+                                    for v in crit.get("villeDeparts") or []],
+                         "formules": [{"code": p["code"], "libelle": p["libelle"]} for p in crit.get("pensions") or []],
+                         "formule_fram": next((p["code"] for p in crit.get("pensions") or [] if p.get("selectionne")), ""),
+                         # « durees » ne couvre que le groupe présélectionné (1 semaine) : « dureesJourNuit » les a toutes
+                         "nuits": sorted({d["dureeNuit"]["value"]
+                                          for d in (crit.get("dureesJourNuit") or []) + (crit.get("durees") or [])})}
+            else:
+                paquet = re.search(r'idPackage: "(\d+)"', etat)
+                if not paquet:
+                    raise RuntimeError("aucun calendrier de prix sur la page du Produit")
+                bloc_villes = re.search(r"departureCities: \[(.*?)\],\s*pensionTypes", etat, re.S)
+                villes = re.findall(r'label: "([^"]+)",\s*value: "([^"]+)"', bloc_villes.group(1)) if bloc_villes else []
+                pensions = re.search(r"pensionTypes: \[(.*?)\]", etat, re.S)
+                formules = re.findall(r'label: "([^"]+)",\s*value: "([^"]+)"', pensions.group(1)) if pensions else []
+                fiche = {"dynamique": False, "idPackage": paquet.group(1),
+                         "villes": [{"libelle": l.strip(), "id": re.sub(r"\D", "", v)} for l, v in villes],
+                         "formules": [{"code": c, "libelle": l} for l, c in formules],
+                         "formule_fram": formules[0][1] if formules else "",
+                         "nuits": sorted({int(n) for n in re.findall(r"label: '(\d+) nuit'", etat)})}
             cache_ecrire(cle, fiche)
         return fiche
+
+    def formules(self, candidat):
+        """Formules du Produit (All Inclusive, Demi Pension…) : [{"code", "libelle"}]."""
+        return self._fiche(candidat)["formules"]
+
+    def formule_par_defaut(self, candidat):
+        """All Inclusive s'il existe, sinon la formule présélectionnée par Fram."""
+        fiche = self._fiche(candidat)
+        codes = [f["code"] for f in fiche["formules"]]
+        return self.FORMULE_PREFEREE if self.FORMULE_PREFEREE in codes else (fiche["formule_fram"] or (codes or [""])[0])
+
+    def formule(self, candidat):
+        """Formule utilisée pour ce Produit : celle choisie dans l'application, sinon celle par défaut."""
+        return self.formules_choisies.get(candidat.code) or self.formule_par_defaut(candidat)
+
+    def libelle_formule(self, candidat):
+        code = self.formule(candidat)
+        return next((f["libelle"] for f in self.formules(candidat) if f["code"] == code), code)
 
     def villes(self, candidat):
         res = {}
         for v in self._fiche(candidat)["villes"]:
-            res.setdefault(_code_ville(v["libelle"], v["id"]), v["libelle"])
+            code = v["code"] if "code" in v else _code_ville(v["libelle"], v["id"])
+            res.setdefault(code, v["libelle"])
         return res
 
     def nuits(self, candidat, ville):
         return self._fiche(candidat)["nuits"]
 
     def _calendrier(self, candidat, ville, nuits):
-        cle = (candidat.code, ville, nuits)
+        formule = self.formule(candidat)
+        cle = (candidat.code, ville, nuits, formule)
         memo = self._calendriers.get(cle)
         if memo and time.time() - memo[0] < self.DUREE_MEMOIRE:
             return memo[1]
         fiche = self._fiche(candidat)
-        ident = next((v["id"] for v in fiche["villes"] if _code_ville(v["libelle"], v["id"]) == ville), None)
-        if ident is None:
-            return {}
-        r = self.get("/api/ajax/catalogueProduit/calendriers", headers={"Referer": candidat.url}, params={
-            "idVilleDepart": ident, "idPackage": fiche["idPackage"], "intervalleDureeNuit.min": nuits,
-            "intervalleDureeNuit.max": nuits, "codePension": fiche["pension"], "idHebergement": candidat.code})
+        params = {"idPackage": fiche["idPackage"], "intervalleDureeNuit.min": nuits,
+                  "intervalleDureeNuit.max": nuits, "codePension": formule}
+        if fiche["dynamique"]:
+            if ville not in {v["code"] for v in fiche["villes"]}:
+                return {}
+            params["codeVilleDepart"] = ville
+        else:
+            ident = next((v["id"] for v in fiche["villes"] if _code_ville(v["libelle"], v["id"]) == ville), None)
+            if ident is None:
+                return {}
+            params.update(idVilleDepart=ident, idHebergement=candidat.code)
+        r = self.get("/api/ajax/catalogueProduit/calendriers", headers={"Referer": candidat.url}, params=params)
         r.raise_for_status()
         data = r.json()
         if data.get("status") != "S_OK":
@@ -420,7 +520,7 @@ class PlateformeCatalogueFram(Connecteur):
         return data
 
     def _departs(self, candidat, ville, nuits):
-        fiche = self._fiche(candidat)
+        libelle = self.libelle_formule(candidat)
         for mois in self._calendrier(candidat, ville, nuits).get("moisAnnees") or []:
             for jour in mois.get("dateDeparts") or []:
                 for c in jour.get("calendriers") or []:
@@ -430,7 +530,7 @@ class PlateformeCatalogueFram(Connecteur):
                         yield {"date": jour["date"], "prix_eur": int(round(prix["prix"])),
                                "meilleur_prix": bool(c.get("meilleurPrix")), "compagnie": "",
                                "retour": ((c.get("periodeVoyage") or {}).get("fin") or {}).get("value", ""),
-                               "formule": fiche.get("pension_libelle", ""), "voyagiste": "Fram"}
+                               "formule": libelle, "voyagiste": "Fram"}
 
     def mois(self, candidat, ville, nuits):
         return sorted({(int(d["date"][5:7]), int(d["date"][:4])) for d in self._departs(candidat, ville, nuits)},
@@ -588,6 +688,120 @@ class PlateformePickAlbatros(Connecteur):
         return f"{self.base}/tc/shop/v1/hotel/{candidat.code}/calendar"
 
 
+# ---------------------------------------------------------------- Plateforme Orchestra (Voyamar)
+
+class PlateformeOrchestra(Connecteur):
+    """Sites construits sur la plateforme Orchestra (Voyamar) : Produits listés par la page de résultats
+    /ajax/serp (48 par page) ; villes, durées et prix de tous les mois en un appel à /ajax/bookingEngine/<n°>.
+    Prix par personne, en euros, comme affichés sur la fiche du Produit."""
+    plateforme = "orchestra"
+    PAR_PAGE = 48  # le maximum accepté par le site
+    DUREE_MEMOIRE = 120  # s : un calendrier lu sert pour tous les mois d'un même relevé
+    PENSION = re.compile(r"pension|compris|inclus|d[ée]jeuner|logement seul|all inclusive", re.I)
+
+    def __init__(self, nom, base):
+        super().__init__(nom, base)
+        self.session.headers.update({"X-Requested-With": "XMLHttpRequest"})
+        self._calendriers = {}
+        self.formules_choisies = {}  # interface commune : un Produit Orchestra n'a qu'une formule
+
+    @staticmethod
+    def reconnaitre(accueil_html, produit_html):
+        return "orchestra-platform.com" in accueil_html + produit_html and "/ajax/bookingEngine/" in produit_html
+
+    def catalogue(self):
+        cle = f"catalogue_{hote(self.base)}"
+        cat = cache_lire(cle, 7 * 24 * 3600)
+        if cat is None:
+            cat, vus, page = [], set(), 1
+            while page <= 200:
+                html = self.get("/ajax/serp", params={"s_c.canal": "B2C", "page": page, "byPage": self.PAR_PAGE},
+                                timeout=(10, 60)).text
+                cartes = html.split('<article class="card card-serp')[1:]
+                for carte in cartes:
+                    lien = re.search(r'data-link="(/[^"]+-(\d+)\.html)"', carte)
+                    titre = re.search(r'<div class="card-title">\s*<div[^>]*>([^<]+)<', carte)
+                    if not (lien and titre) or lien.group(2) in vus:
+                        continue
+                    vus.add(lien.group(2))
+                    dest = re.search(r'<div class="card-destination">\s*([^<]+?)\s*<', carte)
+                    cat.append({"nom": BeautifulSoup(titre.group(1), "html.parser").get_text().strip(),
+                                "url": self.base + lien.group(1), "code": lien.group(2),
+                                "destination": dest.group(1) if dest else ""})
+                if len(cartes) < self.PAR_PAGE:
+                    break
+                page += 1
+            if not cat:
+                raise RuntimeError("catalogue des Produits introuvable")
+            cache_ecrire(cle, cat)
+        return cat
+
+    def rechercher(self, nom, limite=8):
+        res = [Candidat(self.nom, p["nom"], p["url"], p["code"], p["destination"], score_nom(nom, p["nom"]))
+               for p in self.catalogue()]
+        return sorted([c for c in res if c.score >= 0.5], key=lambda c: -c.score)[:limite]
+
+    def _calendrier(self, candidat):
+        memo = self._calendriers.get(candidat.code)
+        if memo and time.time() - memo[0] < self.DUREE_MEMOIRE:
+            return memo[1]
+        r = self.get(f"/ajax/bookingEngine/{candidat.code}", headers={"Referer": candidat.url}, timeout=(10, 60))
+        r.raise_for_status()
+        data = r.json()
+        self._calendriers[candidat.code] = (time.time(), data)
+        return data
+
+    def formules(self, candidat):
+        """La formule du Produit (« Demi pension »…), lue dans ses prestations incluses."""
+        services = ((self._calendrier(candidat).get("terms") or {}).get("services") or {}).get(candidat.code) or []
+        return [{"code": s["label"], "libelle": s["label"]} for s in services if self.PENSION.search(s.get("label", ""))]
+
+    def formule_par_defaut(self, candidat):
+        return (self.formules(candidat) or [{"code": ""}])[0]["code"]
+
+    def formule(self, candidat):
+        return self.formule_par_defaut(candidat)
+
+    def libelle_formule(self, candidat):
+        return self.formule(candidat) or "Non précisée"
+
+    def villes(self, candidat):
+        # « XXX / Sans Transport » : l'hôtel sans le vol, qui ne se compare pas aux forfaits vol + hôtel
+        return {v["code"]: v["label"] for v in (self._calendrier(candidat).get("search") or {}).get("departureCity") or []
+                if v["code"] != "XXX"}
+
+    def nuits(self, candidat, ville):
+        mois = (self._calendrier(candidat).get("availabilities") or {}).get(ville) or {}
+        return sorted({d["nightNb"] for jours in mois.values() for durees in jours.values() for d in durees.values()})
+
+    def mois(self, candidat, ville, nuits):
+        mois = (self._calendrier(candidat).get("availabilities") or {}).get(ville) or {}
+        res = {(int(k[:2]), int(k[3:])) for k, jours in mois.items()
+               if any(d["nightNb"] == nuits for durees in jours.values() for d in durees.values())}
+        return sorted(res, key=lambda m: (m[1], m[0]))
+
+    def prix(self, candidat, ville, nuits, mm, aaaa):
+        from datetime import date, timedelta
+        jours = ((self._calendrier(candidat).get("availabilities") or {}).get(ville) or {}).get(f"{mm:02d}-{aaaa}") or {}
+        formule = self.libelle_formule(candidat)
+        res = []
+        for jour, durees in jours.items():
+            offres = [d for d in durees.values()
+                      if d.get("nightNb") == nuits and d.get("status") == "Available" and d.get("price")]
+            if not offres:
+                continue
+            o = min(offres, key=lambda d: d["price"])  # « 5 jours / 3 nuits » et « 4 jours / 3 nuits » : la moins chère
+            depart = date(aaaa, mm, int(jour))
+            res.append({"date": depart.isoformat(), "prix_eur": int(round(o["price"])), "meilleur_prix": False,
+                        "compagnie": "", "retour": (depart + timedelta(days=nuits)).isoformat(), "formule": formule,
+                        "vol_direct": "Oui" if o.get("directFlightPrice") == o["price"] else "Non",
+                        "voyagiste": self.nom})
+        return sorted(res, key=lambda r: r["date"])
+
+    def adresse_prix(self, candidat):
+        return f"{self.base}/ajax/bookingEngine/{candidat.code}"
+
+
 # ---------------------------------------------------------------- Relevé fait dans le navigateur (Promoséjours)
 
 DOSSIER_IMPORTS = os.path.join(DOSSIER, "imports")
@@ -711,13 +925,14 @@ class ImportNavigateur(Connecteur):
 # ---------------------------------------------------------------- Registre des sites
 
 PLATEFORMES = {c.plateforme: c for c in (PlateformeCalendrierJSON, PlateformeGrilleJSF, PlateformeCatalogueFram,
-                                          PlateformePickAlbatros, ImportNavigateur)}
+                                          PlateformePickAlbatros, PlateformeOrchestra, ImportNavigateur)}
 
 SITES_INTEGRES = [
     {"nom": "Ovoyages", "base": "https://www.ovoyages.com", "plateforme": "calendrier-json"},
     {"nom": "Exotismes", "base": "https://www.exotismes.fr", "plateforme": "grille-jsf"},
     {"nom": "Fram", "base": "https://www.fram.fr", "plateforme": "catalogue-fram"},
     {"nom": "Pick Albatros", "base": "https://www.pickalbatros.com", "plateforme": "hotel-seul-albatros"},
+    {"nom": "Voyamar", "base": "https://www.voyamar-vacances.com", "plateforme": "orchestra"},
 ]
 
 

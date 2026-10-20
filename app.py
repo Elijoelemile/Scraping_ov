@@ -395,7 +395,31 @@ if not nuits_communes:
     st.stop()
 nuits = p2.selectbox("Nombre de nuits", nuits_communes, index=0)
 
-quoi_cle = (ville, nuits)
+# Formule (All Inclusive, Demi Pension…) : choisie automatiquement (All Inclusive en priorité) ; un sélecteur
+# n'apparaît que si le Produit en propose plusieurs. La formule utilisée est toujours affichée.
+formules_utilisees = {}  # site -> libellé de la formule utilisée
+for s, c in choix.items():
+    conn = ss.connecteurs[s]
+    if not hasattr(conn, "formules"):
+        continue
+    try:
+        options = conn.formules(c)
+    except Exception:
+        continue
+    if len(options) > 1:
+        codes = [o["code"] for o in options]
+        defaut = conn.formule_par_defaut(c)
+        conn.formules_choisies[c.code] = st.selectbox(
+            f"Formule ({s})", codes, index=codes.index(defaut) if defaut in codes else 0,
+            format_func=lambda k, o=options: next(x["libelle"] for x in o if x["code"] == k),
+            key=f"formule_{s}_{c.code}",
+            help="All Inclusive est choisi par défaut quand il existe : c'est la formule habituelle des comparatifs. "
+                 "Le prix change beaucoup d'une formule à l'autre.")
+    elif options:
+        st.caption(f"Formule {s} : {options[0]['libelle']} (seule formule proposée)")
+    formules_utilisees[s] = conn.libelle_formule(c)
+
+quoi_cle = (ville, nuits, tuple(sorted(formules_utilisees.items())))
 with st.spinner("Lecture des mois proposés…"):
     mois_par_site = lire_par_site("mois", lambda conn, c: conn.mois(c, ville, nuits))
 afficher_ecartes()
@@ -430,7 +454,8 @@ if b1.button(f"Lancer le relevé (≈ {max(1, round(duree_estimee / 60))} min)",
                     ages.append(conn.age_secondes(c, ville, nuits, mm, aaaa))
                 lignes += [dict(p, site=s) for p in prix]
                 continue
-            cle = f"prix_{s}_{c.code}_{ville}_{nuits}_{mm:02d}_{aaaa}"
+            formule = conn.formule(c) if hasattr(conn, "formule") else ""
+            cle = f"prix_{s}_{c.code}_{ville}_{nuits}_{mm:02d}_{aaaa}" + (f"_{formule}" if formule else "")
             prix = C.cache_lire(cle, duree_cache) if duree_cache else None
             if prix is None:
                 try:
@@ -447,7 +472,7 @@ if b1.button(f"Lancer le relevé (≈ {max(1, round(duree_estimee / 60))} min)",
             lignes += [dict(p, site=s) for p in prix]
     barre.empty()
     ss.releve = {"lignes": lignes, "sites": list(choix), "ville": ville, "libelle_ville": libelles[ville],
-                 "hotel_seul": mode_hotel_seul,
+                 "hotel_seul": mode_hotel_seul, "formules": formules_utilisees,
                  "nuits": nuits, "periode": periode, "produits": {s: c.libelle() for s, c in choix.items()},
                  # date du plus ancien prix affiché (les prix réutilisés sont plus anciens que le clic)
                  "releve_le": time.time() - max(ages, default=0),
@@ -556,7 +581,8 @@ contexte = [f"Sites : {', '.join(sites)}",
             + (f" · budget ≤ {budget} €" if budget else "") + (" · « Meilleur prix » uniquement" if seul_mp else "")
             + (f" · écart ≥ {ecart_min} €" if ecart_min else ""),
             *([f"Écart calculé entre {paire[0]} et {paire[1]}"] if paire else []),
-            *([note_hotel_seul()] if R.get("hotel_seul") else [])]
+            *([note_hotel_seul()] if R.get("hotel_seul") else []),
+            *[f"Formule {s} : {f}" for s, f in (R.get("formules") or {}).items() if s in sites]]
 
 # Synthèse par site
 lignes_synth = []
