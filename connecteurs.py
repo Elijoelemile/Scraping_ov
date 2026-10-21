@@ -688,6 +688,127 @@ class PlateformePickAlbatros(Connecteur):
         return f"{self.base}/tc/shop/v1/hotel/{candidat.code}/calendar"
 
 
+# ---------------------------------------------------------------- Plateforme Mondial Tourisme
+
+class PlateformeMondialTourisme(Connecteur):
+    """Mondial Tourisme (site Drupal Commerce) : Produits listés dans le plan du site (/fr/sejours/<nom>) ;
+    villes dans la page Produit ; durées et calendrier complet d'une ville et d'une durée (« 9/7 » = 9 jours,
+    7 nuits) renvoyés par la page Produit elle-même (POST « update-availabilities », comme quand on change
+    la ville ou la durée). Prix TTC par personne, base chambre double."""
+    plateforme = "mondial-tourisme"
+    DUREE_MEMOIRE = 120  # s : un calendrier lu sert pour tous les mois d'un même relevé
+
+    def __init__(self, nom, base):
+        super().__init__(nom, base)
+        self._pages, self._reponses = {}, {}
+
+    @staticmethod
+    def reconnaitre(accueil_html, produit_html):
+        return "commerce-cart-alter-add-to-cart-alt" in produit_html and "hidden_product_availabilities" in produit_html
+
+    def catalogue(self):
+        cle = f"catalogue_{hote(self.base)}"
+        cat = cache_lire(cle, 7 * 24 * 3600)
+        if cat is None:
+            urls = re.findall(r"<loc>([^<]+/fr/sejours/[^<]+)</loc>", self.get("/sitemap.xml", timeout=(10, 60)).text)
+            cat = []
+            for url in dict.fromkeys(urls):
+                slug = url.rstrip("/").rsplit("/", 1)[-1]
+                nom = re.sub(r"-(\d)(-?pro|-\d)?$", r" \1*", slug)  # « …-5-3 », « …-3pro » : étoiles et doublons
+                cat.append({"nom": slug_en_nom(nom), "url": url, "code": slug})
+            if not cat:
+                raise RuntimeError("catalogue des Produits introuvable")
+            cache_ecrire(cle, cat)
+        return cat
+
+    def rechercher(self, nom, limite=8):
+        res = [Candidat(self.nom, p["nom"], p["url"], p["code"], "", score_nom(nom, p["nom"])) for p in self.catalogue()]
+        return sorted([c for c in res if c.score >= 0.5], key=lambda c: -c.score)[:limite]
+
+    def _page(self, candidat):
+        """Villes, adresse du formulaire et une date de départ valable, lues dans la page Produit."""
+        if candidat.code not in self._pages:
+            html = self.get(candidat.url).text
+
+            def options(nom):
+                bloc = re.search(r'<select[^>]*name="%s"[^>]*>(.*?)</select>' % nom, html, re.S)
+                return re.findall(r'<option value="([^"]*)"[^>]*>([^<]*)<', bloc.group(1)) if bloc else []
+
+            def choisi(nom):
+                bloc = re.search(r'<select[^>]*name="%s"[^>]*>(.*?)</select>' % nom, html, re.S)
+                m = re.search(r'<option value="([^"]*)" selected', bloc.group(1)) if bloc else None
+                return m.group(1) if m else ""
+
+            ville, jour, duree = choisi("lieu_de_depart"), choisi("date_depart"), choisi("duree_depart")
+            if not (ville and jour and "/" in duree and "commerce-cart-alter-add-to-cart-alt" in html):
+                raise RuntimeError("aucun calendrier de prix : le Produit n'est pas en vente en ce moment")
+            # Le formulaire répond à l'adresse complète du Produit (…/<ville>/<date>/<nuits>) ; sans elle : erreur 500
+            self._pages[candidat.code] = {"action": f"/fr/sejours/{candidat.code}/{ville}/{jour}/{int(duree.split('/')[1]):02d}",
+                                          "villes": dict(options("lieu_de_depart")), "date": jour, "duree": duree}
+        return self._pages[candidat.code]
+
+    def _demander(self, candidat, element, ville, duree=""):
+        cle = (candidat.code, element, ville, duree)
+        memo = self._reponses.get(cle)
+        if memo and time.time() - memo[0] < self.DUREE_MEMOIRE:
+            return memo[1]
+        page = self._page(candidat)
+        self.attendre()
+        r = self.session.post(self.base + page["action"], timeout=DELAI,
+                              headers={"X-Requested-With": "XMLHttpRequest", "Referer": candidat.url},
+                              data={"element": element, "request-type": "update-availabilities",
+                                    "begin_date": page["date"], "city_code": ville,
+                                    "duration": duree or page["duree"],  # durée vide : erreur 500 du site
+                                    "adults": 2, "children": 0, "infants": 0, "flex": "false"})
+        r.raise_for_status()
+        data = json.loads(r.text)
+        self._reponses[cle] = (time.time(), data)
+        return data
+
+    def _durees(self, candidat, ville):
+        """Formules de durée proposées depuis cette ville : ["9/7", "8/7", …] (jours/nuits)."""
+        data = self._demander(candidat, "edit-lieu-de-depart", ville)
+        return re.findall(r'<option value="(\d+/\d+)"', data.get("durations") or "")
+
+    def villes(self, candidat):
+        return {code: libelle.strip() for code, libelle in self._page(candidat)["villes"].items()}
+
+    def nuits(self, candidat, ville):
+        return sorted({int(d.split("/")[1]) for d in self._durees(candidat, ville)})
+
+    def _calendrier(self, candidat, ville, nuits):
+        """{date: prix} pour toutes les formules de `nuits` nuits (« 8 jours / 7 nuits » et « 9 jours / 7 nuits »…) :
+        le prix le plus bas par date."""
+        import html as H
+        res = {}
+        for duree in [d for d in self._durees(candidat, ville) if int(d.split("/")[1]) == nuits]:
+            bloc = self._demander(candidat, "edit-duree-nuits", ville, duree).get("hidden_product_availabilities") or ""
+            texte = re.search(r"<textarea[^>]*>(.*?)</textarea>", bloc, re.S)
+            dispo = json.loads(H.unescape(texte.group(1)).strip() or "null") if texte else None
+            for jour, info in (dispo or {}).items() if isinstance(dispo, dict) else []:
+                prix = int(float(info.get("price") or 0))
+                if prix > 0 and (jour not in res or prix < res[jour]):
+                    res[jour] = prix
+        return res
+
+    def mois(self, candidat, ville, nuits):
+        return sorted({(int(j[5:7]), int(j[:4])) for j in self._calendrier(candidat, ville, nuits)},
+                      key=lambda m: (m[1], m[0]))
+
+    def prix(self, candidat, ville, nuits, mm, aaaa):
+        from datetime import date, timedelta
+        res = []
+        for jour, prix in sorted(self._calendrier(candidat, ville, nuits).items()):
+            if jour.startswith(f"{aaaa}-{mm:02d}"):
+                depart = date.fromisoformat(jour)
+                res.append({"date": jour, "prix_eur": prix, "meilleur_prix": False, "compagnie": "",
+                            "retour": (depart + timedelta(days=nuits)).isoformat(), "voyagiste": self.nom})
+        return res
+
+    def adresse_prix(self, candidat):
+        return candidat.url
+
+
 # ---------------------------------------------------------------- Plateforme TUI
 
 class PlateformeTUI(Connecteur):
@@ -1047,7 +1168,7 @@ class ImportNavigateur(Connecteur):
 # ---------------------------------------------------------------- Registre des sites
 
 PLATEFORMES = {c.plateforme: c for c in (PlateformeCalendrierJSON, PlateformeGrilleJSF, PlateformeCatalogueFram,
-                                          PlateformePickAlbatros, PlateformeOrchestra, PlateformeTUI,
+                                          PlateformePickAlbatros, PlateformeOrchestra, PlateformeTUI, PlateformeMondialTourisme,
                                           ImportNavigateur)}
 
 SITES_INTEGRES = [
@@ -1059,6 +1180,7 @@ SITES_INTEGRES = [
     {"nom": "Thalasso N°1", "base": "https://www.thalassonumero1.com", "plateforme": "calendrier-json"},
     {"nom": "Héliades", "base": "https://www.heliades.fr", "plateforme": "orchestra"},
     {"nom": "TUI", "base": "https://www.tui.fr", "plateforme": "tui"},
+    {"nom": "Mondial Tourisme", "base": "https://www.mondialtourisme.fr", "plateforme": "mondial-tourisme"},
 ]
 SANS_TRANSPORT = "XXX"  # code de ville des séjours vendus sans le vol (« Sans Transport »)
 
