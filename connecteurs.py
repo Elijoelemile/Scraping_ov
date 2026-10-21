@@ -809,6 +809,148 @@ class PlateformeMondialTourisme(Connecteur):
         return candidat.url
 
 
+# ---------------------------------------------------------------- Plateforme Speedresa (Top of Travel)
+
+class PlateformeSpeedresa(Connecteur):
+    """Sites d'agence sur le moteur Speedresa (Top of Travel) : Produits listés par /rest/search/result/load.json
+    (un seul appel) ; villes, durées (« duration-8-7 » = 8 jours, 7 nuits) et calendrier d'une ville et d'une durée
+    via /rest/product/package/price.json (un appel, tous les mois). Prix TTC par personne (« TTC/heb »)."""
+    plateforme = "speedresa"
+    DUREE_MEMOIRE = 120  # s : un calendrier lu sert pour tous les mois d'un même relevé
+    THEME_VOLS = "filter-theme-6002"  # « Vols secs » : billets d'avion seuls, pas des séjours
+
+    def __init__(self, nom, base):
+        super().__init__(nom, base)
+        self.session.headers["X-Requested-With"] = "XMLHttpRequest"
+        self._reponses = {}
+
+    @staticmethod
+    def reconnaitre(accueil_html, produit_html):
+        return "speedresa.com" in accueil_html + produit_html and "/search/result/package/source-" in accueil_html
+
+    def _source(self):
+        accueil = self.get("/").text
+        m = re.search(r"/search/result/package/source-(\d+)/", accueil)
+        if not m:
+            raise RuntimeError("moteur de recherche introuvable")
+        return m.group(1)
+
+    def catalogue(self):
+        cle = f"catalogue_{hote(self.base)}"
+        cat = cache_lire(cle, 24 * 3600)
+        if cat is None:
+            import html as H
+            source, cat, page, pages = self._source(), [], 1, 1
+            while page <= pages:
+                adresse = f"{self.base}/search/result/package/source-{source}/engine-2/"
+                self.attendre()
+                r = self.session.post(f"{self.base}/rest/search/result/load.json", timeout=(10, 60),
+                                      headers={"x-page-url": adresse, "Referer": adresse},
+                                      data={"source_id": source, "per_page": 100, "type": "package", "page": page,
+                                            "template": "default", "parameter[engine]": 2})
+                data = r.json()
+                pages = int((data.get("pagination") or {}).get("pages") or 1)
+                for produit in (data.get("products") or {}).values():
+                    rendu = produit.get("render", "")
+                    titre = re.search(r'class="product-title">([^<]+)<', rendu)
+                    lien = re.search(r'href="([^"?]+/produit/package/(\d+)-\d+/[^"?]+)"', rendu)
+                    if titre and lien and self.THEME_VOLS not in rendu:
+                        lieu = re.search(r"</h2>\s*<p>(.*?)</p>", rendu, re.S)
+                        pays = re.findall(r"<strong>(?:<b>\s*>\s*</b>)?([^<]+)</strong>", lieu.group(1) if lieu else "")
+                        cat.append({"nom": H.unescape(titre.group(1)).strip(), "url": lien.group(1),
+                                    "code": lien.group(2), "source": source,
+                                    "destination": " > ".join(H.unescape(p).strip() for p in pays[:2])})
+                page += 1
+            if not cat:
+                raise RuntimeError("catalogue des Produits introuvable")
+            cache_ecrire(cle, cat)
+        return cat
+
+    def rechercher(self, nom, limite=8):
+        res = [Candidat(self.nom, p["nom"], p["url"], p["code"], p["destination"], score_nom(nom, p["nom"]))
+               for p in self.catalogue()]
+        return sorted([c for c in res if c.score >= 0.5], key=lambda c: -c.score)[:limite]
+
+    def _vue(self, candidat, ville="", jours="", nuits=""):
+        """Calendrier HTML d'une ville et d'une durée. Sans précision : la ville et la durée de l'adresse du Produit
+        (…/from-PAR/date-…/nights-7) ; le site refuse une demande sans ville."""
+        if not ville:
+            ville = (re.search(r"/from-([A-Z]{3})/", candidat.url) or [None, ""])[1]
+            nuits = (re.search(r"/nights-(\d+)", candidat.url) or [None, ""])[1]
+        cle = (candidat.code, ville, jours, nuits)
+        memo = self._reponses.get(cle)
+        if memo and time.time() - memo[0] < self.DUREE_MEMOIRE:
+            return memo[1]
+        source = re.search(r"/produit/package/\d+-(\d+)/", candidat.url).group(1)
+        self.attendre()
+        r = self.session.post(f"{self.base}/rest/product/package/price.json", timeout=DELAI,
+                              headers={"Referer": candidat.url},
+                              data={"source_id": source, "affilie": "", "product_id": candidat.code,
+                                    "product_type": "package", "template": "default", "from_parameter": ville,
+                                    "date_parameter": "", "night_parameter": nuits, "day_parameter": jours,
+                                    "private": 0, "all_days": 0})
+        r.raise_for_status()
+        data = r.json()
+        if data.get("error"):
+            raise RuntimeError(data.get("message") or "calendrier de prix indisponible")
+        self._reponses[cle] = (time.time(), data.get("view") or "")
+        return self._reponses[cle][1]
+
+    def villes(self, candidat):
+        bloc = re.search(r'<select id="prices-from"[^>]*>(.*?)</select>', self._vue(candidat), re.S)
+        return {v: l.strip() for v, l in re.findall(r'<option[^>]*value="([A-Z]{3})"[^>]*>([^<]*)<', bloc.group(1))} \
+            if bloc else {}
+
+    def _durees(self, candidat, ville):
+        """[(jours, nuits)] proposées depuis cette ville."""
+        bloc = re.search(r'<select id="multi_duration"[^>]*>(.*?)</select>', self._vue(candidat), re.S)
+        return [(int(j), int(n)) for j, n, villes in
+                re.findall(r'value="duration-(\d+)-(\d+)"[^>]*data-froms="([^"]*)"', bloc.group(1) if bloc else "")
+                if ville in villes.split(",")]
+
+    def nuits(self, candidat, ville):
+        return sorted({n for _, n in self._durees(candidat, ville)})
+
+    def _calendrier(self, candidat, ville, nuits):
+        """{date: prix} pour toutes les formules de `nuits` nuits ; prix le plus bas par date."""
+        res = {}
+        for jours, n in self._durees(candidat, ville):
+            if n != nuits:
+                continue
+            soupe = BeautifulSoup(self._vue(candidat, ville, jours, nuits), "html.parser")
+            for bloc in soupe.find_all(class_="price-period"):
+                mois = re.search(r"price-period-filter-(\d{4})-m(\d+)-01", " ".join(bloc.get("class", [])))
+                if not mois or "price-period-header" in bloc.get("class", []):
+                    continue
+                for case in bloc.find_all(class_=f"price-filter-{ville}"):
+                    if f"duration-{jours}-{nuits}" not in case.get("class", []):
+                        continue
+                    jour = case.find_previous_sibling(class_="date")
+                    montant = case.find(class_="amount")
+                    statut = case.find(class_="day-status")
+                    numero = re.search(r"\d+", jour.get_text()) if jour else None
+                    if not (numero and montant and statut and "OK" in statut.get("class", [])):
+                        continue
+                    date = f"{mois.group(1)}-{int(mois.group(2)):02d}-{int(numero.group()):02d}"
+                    prix = int(re.sub(r"\D", "", montant.get_text()) or 0)
+                    if prix and (date not in res or prix < res[date]):
+                        res[date] = prix
+        return res
+
+    def mois(self, candidat, ville, nuits):
+        return sorted({(int(j[5:7]), int(j[:4])) for j in self._calendrier(candidat, ville, nuits)},
+                      key=lambda m: (m[1], m[0]))
+
+    def prix(self, candidat, ville, nuits, mm, aaaa):
+        from datetime import date, timedelta
+        return [{"date": j, "prix_eur": p, "meilleur_prix": False, "compagnie": "",
+                 "retour": (date.fromisoformat(j) + timedelta(days=nuits)).isoformat(), "voyagiste": self.nom}
+                for j, p in sorted(self._calendrier(candidat, ville, nuits).items()) if j.startswith(f"{aaaa}-{mm:02d}")]
+
+    def adresse_prix(self, candidat):
+        return f"{self.base}/rest/product/package/price.json"
+
+
 # ---------------------------------------------------------------- Plateforme TUI
 
 class PlateformeTUI(Connecteur):
@@ -1168,7 +1310,7 @@ class ImportNavigateur(Connecteur):
 # ---------------------------------------------------------------- Registre des sites
 
 PLATEFORMES = {c.plateforme: c for c in (PlateformeCalendrierJSON, PlateformeGrilleJSF, PlateformeCatalogueFram,
-                                          PlateformePickAlbatros, PlateformeOrchestra, PlateformeTUI, PlateformeMondialTourisme,
+                                          PlateformePickAlbatros, PlateformeOrchestra, PlateformeTUI, PlateformeMondialTourisme, PlateformeSpeedresa,
                                           ImportNavigateur)}
 
 SITES_INTEGRES = [
@@ -1181,6 +1323,7 @@ SITES_INTEGRES = [
     {"nom": "Héliades", "base": "https://www.heliades.fr", "plateforme": "orchestra"},
     {"nom": "TUI", "base": "https://www.tui.fr", "plateforme": "tui"},
     {"nom": "Mondial Tourisme", "base": "https://www.mondialtourisme.fr", "plateforme": "mondial-tourisme"},
+    {"nom": "Top of Travel", "base": "https://www.topoftravel.fr", "plateforme": "speedresa"},
 ]
 SANS_TRANSPORT = "XXX"  # code de ville des séjours vendus sans le vol (« Sans Transport »)
 

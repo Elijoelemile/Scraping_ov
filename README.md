@@ -17,6 +17,7 @@ Elle reprend le calendrier de prix des sites : chaque ligne du calendrier (du lu
 | **Héliades** | Relevé automatique (966 Produits, dont plus de 100 en République dominicaine) | Date de retour, formule, vol direct |
 | **TUI** | Relevé automatique (environ 1 080 Produits : séjours, clubs Lookéa, circuits) | « Meilleur prix », date de retour |
 | **Mondial Tourisme** | Relevé automatique (environ 550 Produits : Tunisie, Égypte, Maroc, Canaries, République dominicaine…) | Date de retour |
+| **Top of Travel** | Relevé automatique (environ 65 Produits : Madère et Portugal, Albanie, Cap-Vert, Croatie, Italie, Malte, Monténégro) | Date de retour |
 | **Thalasso N°1** | Relevé automatique (site du groupe Ovoyages, même plateforme) | « Meilleur prix » |
 | **Pick Albatros** | Relevé automatique, **hôtel seul (sans vol)** : tarifs affichés sans comparaison | Date de retour ; prix convertis de dollars en euros |
 | **Promoséjours** | Relevé fait dans votre navigateur (extension), puis importé | « Meilleur prix du mois », date de retour, formule, vol direct, voyagiste |
@@ -41,6 +42,8 @@ Voir [Ajouter un site](#ajouter-un-site) et [Sites protégés](#sites-protégés
 > **TUI** : un même hôtel existe souvent en plusieurs Produits (« Choix Flex », « Flex bagages inclus », « Sans transport »…), avec des prix différents ; vérifiez celui retenu sous le site. Certains Produits ne partent que certains jours (par exemple dimanche et mardi) : avec le filtre mercredi/samedi par défaut, ils peuvent n'afficher aucun prix. Quelques Produits ne sont pas en vente au moment de la recherche (aucun calendrier). TUI est protégé par Imperva : l'accès fonctionne aujourd'hui, mais s'il venait à être bloqué, l'application ne contournerait pas ce blocage.
 
 > **Mondial Tourisme** : pour un même nombre de nuits, le site propose parfois plusieurs formules (« 8 jours / 7 nuits » et « 9 jours / 7 nuits ») ; l'application les réunit et garde le prix le plus bas de chaque date. Les noms des Produits sont tirés de leur adresse (« Impressive Punta Cana 5* »). Le site passe par un pare-feu applicatif qui ne bloque pas aujourd'hui ; s'il venait à bloquer, l'application ne le contournerait pas.
+
+> **Top of Travel** : voyagiste dont Fram revend aussi les « Top Clubs » (mêmes prix constatés). Petit catalogue (environ 65 Produits), sans robots.txt ni protection anti-robot. Les offres « vols secs » (billet d'avion seul) ne sont pas proposées.
 
 > Un même Produit peut être vendu par plusieurs sites sous des noms et des références différents. Par exemple, Ovoyages semble revendre des séjours Fram : pour certaines dates, les prix sont identiques.
 
@@ -114,7 +117,7 @@ Le serveur installe automatiquement `requirements.txt` (modules Python) et `pack
 
 À savoir en ligne :
 - **Accès** : l'application est publique par défaut. Limitez-la aux personnes invitées dans **Share** pour éviter que n'importe qui lance des relevés.
-- **Données éphémères** : le cache, les sites ajoutés depuis le panneau, les sites à étudier et les relevés importés sont **effacés à chaque redémarrage** du serveur. Seuls les sites intégrés au code (Ovoyages, Exotismes, Fram, Pick Albatros, Voyamar, Thalasso N°1, Héliades, TUI, Mondial Tourisme) restent toujours disponibles.
+- **Données éphémères** : le cache, les sites ajoutés depuis le panneau, les sites à étudier et les relevés importés sont **effacés à chaque redémarrage** du serveur. Seuls les sites intégrés au code (Ovoyages, Exotismes, Fram, Pick Albatros, Voyamar, Thalasso N°1, Héliades, TUI, Mondial Tourisme, Top of Travel) restent toujours disponibles.
 - **Adresse des requêtes** : les relevés partent des serveurs de Streamlit. Un site qui bloque les adresses de serveurs peut être refusé en ligne alors qu'il fonctionne en local.
 
 ---
@@ -193,6 +196,7 @@ Un connecteur correspond à une **plateforme de réservation**, c'est-à-dire au
 | `orchestra` | Voyamar, Héliades | Produits listés par la page de résultats `/ajax/serp` (48 par page, sans cookie de session : avec, Héliades s'arrête à la 3e page) ; villes, durées, formule et prix de tous les mois en un appel via `/ajax/bookingEngine/<n° du Produit>`. Les autres sites construits sur la plateforme Orchestra sont reconnus par « Ajouter un site » |
 | `tui` | TUI | Produits listés dans le plan du site (`…/nom-du-produit_CODE/`) ; paramètres du calendrier lus dans la page Produit ; prix d'un mois via `/ProductSheet/Home/RefreshPriceTable/`, un appel par mois |
 | `mondial-tourisme` | Mondial Tourisme | Produits listés dans le plan du site (`/fr/sejours/<nom>`) ; villes lues dans la page Produit ; durées et calendrier complet d'une ville et d'une formule (« 9/7 » = 9 jours, 7 nuits) renvoyés par la page Produit elle-même (POST « update-availabilities ») ; pour une durée, toutes les formules de même nombre de nuits sont réunies (prix le plus bas par date) |
+| `speedresa` | Top of Travel | Moteur d'agence Speedresa : Produits listés par `/rest/search/result/load.json` (un appel, offres « vols secs » exclues) ; villes, durées et calendrier d'une ville et d'une durée, tous les mois en un appel, via `/rest/product/package/price.json` |
 | `import-navigateur` | Promoséjours | Prix importés depuis l'extension de navigateur, sans aucune requête de l'application |
 
 **Écrire une plateforme** : créer dans `connecteurs.py` une classe qui hérite de `Connecteur`, implémenter `reconnaitre()`, `rechercher()`, `villes()`, `nuits()`, `mois()`, `prix()` et `adresse_prix()`, puis l'ajouter au dictionnaire `PLATEFORMES`. Pour qu'un site soit **toujours** présent, y compris en ligne, l'ajouter aussi à `SITES_INTEGRES`.
