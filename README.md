@@ -54,6 +54,8 @@ Voir [Ajouter un site](#ajouter-un-site) et [Sites protégés](#sites-protégés
 
 > **Asia** : son robots.txt interdit aux robots le script de la fiche et les adresses avec `?idproduit=` ; il a été ajouté sur décision de l'utilisateur, comme Travel Evasion. Asia vend surtout ses propres circuits, qu'aucun autre site ne propose : la comparaison porte surtout sur ses séjours vol + hôtel. Ses catégories d'hôtel ou de chambre peuvent différer de celles des autres sites (par exemple Katathani classé 4* chez Asia, 5* ailleurs).
 
+> **Ovoyages** : son plan du site ne contient pas toutes ses offres (à Marrakech, 17 sur 24 manquaient, dont le Valeria Premium Dar Atlas). L'application lit donc la liste complète des offres en cours : la **première recherche sur Ovoyages prend environ 11 minutes**, puis la liste est gardée 3 jours.
+
 > Un même Produit peut être vendu par plusieurs sites sous des noms et des références différents. Par exemple, Ovoyages semble revendre des séjours Fram : pour certaines dates, les prix sont identiques.
 
 ---
@@ -198,7 +200,7 @@ Un connecteur correspond à une **plateforme de réservation**, c'est-à-dire au
 
 | Plateforme | Sites | Fonctionnement |
 |---|---|---|
-| `calendrier-json` | Ovoyages, Thalasso N°1 | Produits listés dans le plan du site ; prix via `/pricetable/…`, un appel par mois |
+| `calendrier-json` | Ovoyages, Thalasso N°1 | Produits : toutes les offres en cours de la page `/voyages` (24 par page, environ 170 pages pour Ovoyages), complétées par le plan du site, qui en oublie beaucoup ; prix via `/pricetable/…`, un appel par mois |
 | `grille-jsf` | Exotismes (.fr, .be) | Recherche par mots-clés du site ; prix via la grille `/reservation/grilles.jsf`, un appel par mois |
 | `catalogue-fram` | Fram | Produits listés dans le plan du site, classiques (`…-76450.html`) et forfaits dynamiques (`…-dp100152.html`) ; options dans la page Produit ou, pour les forfaits dynamiques, via `/api/ajax/catalogueProduit/calendriersCritere` ; prix via `/api/ajax/catalogueProduit/calendriers`, tous les mois en un appel, pour la formule choisie |
 | `hotel-seul-albatros` | Pick Albatros | Hôtels listés à partir des liens de réservation du site ; prix par nuit via le calendrier de tarifs du moteur TravelClick (91 jours par appel), convertis en euros |

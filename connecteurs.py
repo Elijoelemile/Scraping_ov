@@ -220,25 +220,67 @@ class PlateformeCalendrierJSON(Connecteur):
         return r.json() if r.text.strip() else {}
 
     def catalogue(self):
-        cle = f"catalogue_{hote(self.base)}"
-        cat = cache_lire(cle, 24 * 3600)
+        """Offres en cours de la page /voyages (complète), puis Produits du plan du site absents de cette liste.
+        Le plan du site seul ne suffit pas : à Marrakech, 17 offres sur 24 n'y figuraient pas."""
+        cle = f"catalogue_v2_{hote(self.base)}"
+        cat = cache_lire(cle, 3 * 24 * 3600)
         if cat is None:
-            xml = self.get("/sitemap.xml").text
-            sous = re.findall(r"<sitemap>\s*<loc>([^<]+)</loc>", xml)
-            sources = [u for u in sous if "product" in u.lower()] or sous[:5]
-            urls = re.findall(r"<url>\s*<loc>([^<]+)</loc>", xml)
-            for s in sources:
-                urls += re.findall(r"<loc>([^<]+)</loc>", self.get(s, timeout=60).text)
-            cat = []
-            for url in urls:
-                m = re.search(r"/([^/]+)-(\d+)$", url)
-                if not m:
-                    continue
-                morceaux = url.split("/")
-                dest = morceaux[-2].replace("vacances-", "").replace("voyages-", "") if len(morceaux) > 5 else ""
-                cat.append({"nom": re.sub(r" (\d)$", r" \1*", slug_en_nom(m.group(1))), "url": url,
-                            "code": m.group(2), "destination": slug_en_nom(dest)})
+            cat = self._offres_en_cours()
+            connus = {p["code"] for p in cat}
+            cat += [p for p in self._plan_du_site() if p["code"] not in connus]
+            if not cat:
+                raise RuntimeError("catalogue des Produits introuvable")
             cache_ecrire(cle, cat)
+        return cat
+
+    def _offres_en_cours(self):
+        """Toutes les offres de la liste /voyages, 24 par page : nom, n°, ville et pays (données de suivi de la page)."""
+        cat, page, pages = [], 1, 1
+        while page <= pages:
+            # En-têtes de page normale : avec ceux d'un appel AJAX, le site renvoie un fragment sans les données.
+            # Pages d'environ 1 Mo, parfois coupées en cours de route : 3 essais, puis la page est sautée.
+            html = ""
+            for _ in range(3):
+                try:
+                    html = self.get("/voyages" + (f"?p={page}" if page > 1 else ""), timeout=(10, 60),
+                                    headers={"X-Requested-With": None, "Accept": "text/html"}).text
+                    break
+                except requests.RequestException:
+                    continue
+            if page == 1:
+                m = re.search(r'data-pages="(\d+)"', html)
+                pages = min(int(m.group(1)), 400) if m else 1
+            liens = {code: url for url, code in re.findall(r'href="([^"?#]*/[a-z0-9-]+-(\d{4,}))(?:[?#][^"]*)?"', html)}
+            for bloc in re.findall(r'\{[^{}]*"item_id":\s*"(?:\d+)"[^{}]*\}', html):
+                try:
+                    o = json.loads(bloc)
+                except ValueError:
+                    continue
+                code = o.get("item_id")
+                if code in liens and o.get("item_name"):
+                    url = liens[code] if liens[code].startswith("http") else self.base + liens[code]
+                    cat.append({"nom": o["item_name"], "url": url, "code": code,
+                                "destination": o.get("item_city") or o.get("item_country") or ""})
+            page += 1
+        return list({p["code"]: p for p in cat}.values())
+
+    def _plan_du_site(self):
+        """Produits listés dans le plan du site (…/<nom>-<n°>)."""
+        xml = self.get("/sitemap.xml").text
+        sous = re.findall(r"<sitemap>\s*<loc>([^<]+)</loc>", xml)
+        sources = [u for u in sous if "product" in u.lower()] or sous[:5]
+        urls = re.findall(r"<url>\s*<loc>([^<]+)</loc>", xml)
+        for s in sources:
+            urls += re.findall(r"<loc>([^<]+)</loc>", self.get(s, timeout=60).text)
+        cat = []
+        for url in urls:
+            m = re.search(r"/([^/]+)-(\d+)$", url)
+            if not m:
+                continue
+            morceaux = url.split("/")
+            dest = morceaux[-2].replace("vacances-", "").replace("voyages-", "") if len(morceaux) > 5 else ""
+            cat.append({"nom": re.sub(r" (\d)$", r" \1*", slug_en_nom(m.group(1))), "url": url,
+                        "code": m.group(2), "destination": slug_en_nom(dest)})
         return cat
 
     def rechercher(self, nom, limite=8):
