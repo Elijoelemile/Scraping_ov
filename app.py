@@ -373,7 +373,13 @@ for v in villes_par_site.values():
         libelles.setdefault(code, lib)
 
 if not communes:
-    st.error("Aucune ville de départ commune à ces sites pour ce Produit.")
+    sans_vol = [s for s, v in villes_par_site.items() if set(v) == {C.SANS_TRANSPORT}]
+    if sans_vol:  # séjour vendu sans le vol (Thalasso N°1 en France…) : il ne se compare pas à un séjour avec vol
+        st.error(f"{', '.join(sans_vol)} vend ce Produit **sans transport** (sans le vol), alors que les autres "
+                 "sites l'incluent : les prix ne se comparent pas. Lancez la recherche sur ce site seul, ou avec "
+                 "d'autres sites qui le vendent aussi sans transport.")
+    else:
+        st.error("Aucune ville de départ commune à ces sites pour ce Produit.")
     st.stop()
 
 p1, p2, p3 = st.columns([2, 1, 3])

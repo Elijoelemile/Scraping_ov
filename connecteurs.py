@@ -933,7 +933,9 @@ SITES_INTEGRES = [
     {"nom": "Fram", "base": "https://www.fram.fr", "plateforme": "catalogue-fram"},
     {"nom": "Pick Albatros", "base": "https://www.pickalbatros.com", "plateforme": "hotel-seul-albatros"},
     {"nom": "Voyamar", "base": "https://www.voyamar-vacances.com", "plateforme": "orchestra"},
+    {"nom": "Thalasso N°1", "base": "https://www.thalassonumero1.com", "plateforme": "calendrier-json"},
 ]
+SANS_TRANSPORT = "XXX"  # code de ville des séjours vendus sans le vol (« Sans Transport »)
 
 
 def sites_ajoutes():
