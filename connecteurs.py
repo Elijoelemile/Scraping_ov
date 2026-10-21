@@ -809,6 +809,122 @@ class PlateformeMondialTourisme(Connecteur):
         return candidat.url
 
 
+# ---------------------------------------------------------------- Plateforme Advences (Asia)
+
+class PlateformeAdvences(Connecteur):
+    """Sites sur le logiciel Advences (Asia) : Produits listés dans le plan du site
+    (/formule-<type>/destination-<pays>/<nom>-<n°>) ; villes (« 86|PAR|Paris ») et durées (« 10,7,7 » = 10 jours,
+    7 nuits) lues dans le formulaire « frmDatesTarifs » de la fiche ; dates et prix d'une ville et d'une durée via
+    /ajax/produitComboDatesTarifs.cfm (options « 02/11/2026|3350.000|jaune »). Prix TTC par personne, base 2 adultes."""
+    plateforme = "advences"
+    SUR_MESURE = "/formule-voyages-sur-mesure/"  # voyages sur devis : pas de dates ni de prix publiés
+
+    def __init__(self, nom, base):
+        super().__init__(nom, base)
+        self._fiches, self._dates = {}, {}
+
+    @staticmethod
+    def reconnaitre(accueil_html, produit_html):
+        return 'id="frmDatesTarifs"' in produit_html and "VilleDepart" in produit_html
+
+    def catalogue(self):
+        cle = f"catalogue_{hote(self.base)}"
+        cat = cache_lire(cle, 7 * 24 * 3600)
+        if cat is None:
+            cat, vus = [], set()
+            for url in re.findall(r"<loc>([^<]+)</loc>", self.get("/sitemap.xml", timeout=(10, 60)).text):
+                m = re.search(r"/formule-[^/]+/destination-([^/]+)/(.+)-(\d+)$", url)
+                if not m or self.SUR_MESURE in url or m.group(3) in vus:
+                    continue
+                vus.add(m.group(3))
+                nom = re.sub(r"^(sejour-vol-hotel|sejour|circuit)-", "", m.group(2))
+                nom = re.sub(r"-(\d)-", r" \1* ", nom + "-").strip("-")  # « …-resort-4-chambre… » : 4 étoiles
+                cat.append({"nom": slug_en_nom(nom), "url": url, "code": m.group(3),
+                            "destination": slug_en_nom(m.group(1))})
+            if not cat:
+                raise RuntimeError("catalogue des Produits introuvable")
+            cache_ecrire(cle, cat)
+        return cat
+
+    def rechercher(self, nom, limite=8):
+        res = [Candidat(self.nom, p["nom"], p["url"], p["code"], p["destination"], score_nom(nom, p["nom"]))
+               for p in self.catalogue()]
+        return sorted([c for c in res if c.score >= 0.5], key=lambda c: -c.score)[:limite]
+
+    def _fiche(self, candidat):
+        """Champs du formulaire des dates et tarifs, avec les choix de villes et de durées."""
+        if candidat.code not in self._fiches:
+            r = self.get(candidat.url)  # le plan du site renvoie parfois vers le n° actuel du Produit
+            formulaire = BeautifulSoup(r.text, "html.parser").find("form", id="frmDatesTarifs")
+            if not formulaire:
+                raise RuntimeError("aucune date ni aucun tarif publiés pour ce Produit")
+            champs, choix = {}, {"VilleDepart": [], "duree": []}
+            for el in formulaire.find_all(["input", "select"]):
+                nom = el.get("name")
+                if not nom:
+                    continue
+                if el.name == "select":
+                    options = [o.get("value", "") for o in el.find_all("option") if o.get("value")]
+                    if nom in choix:
+                        choix[nom] = options
+                    champs[nom] = (el.find("option", selected=True) or {}).get("value") or (options or [""])[0]
+                else:
+                    champs[nom] = el.get("value", "")
+                    if nom in choix and champs[nom]:
+                        choix[nom] = [champs[nom]]
+            champs.update(adultes="2", enfants="0")
+            self._fiches[candidat.code] = {"url": r.url, "champs": champs, **choix}
+        return self._fiches[candidat.code]
+
+    def villes(self, candidat):
+        res = {}
+        for v in self._fiche(candidat)["VilleDepart"]:
+            morceaux = v.split("|")
+            if len(morceaux) >= 3:
+                res[morceaux[1]] = morceaux[2]
+        return res
+
+    def nuits(self, candidat, ville):
+        return sorted({int(d.split(",")[1]) for d in self._fiche(candidat)["duree"] if d.count(",") >= 1})
+
+    def _calendrier(self, candidat, ville, nuits):
+        """{date AAAA-MM-JJ: prix le plus bas} pour toutes les durées de `nuits` nuits."""
+        cle = (candidat.code, ville, nuits)
+        if cle in self._dates:
+            return self._dates[cle]
+        fiche = self._fiche(candidat)
+        valeur_ville = next((v for v in fiche["VilleDepart"] if v.split("|")[1:2] == [ville]), None)
+        res = {}
+        for duree in [d for d in fiche["duree"] if d.count(",") >= 1 and int(d.split(",")[1]) == nuits]:
+            if valeur_ville is None:
+                break
+            self.attendre()
+            r = self.session.post(f"{self.base}/ajax/produitComboDatesTarifs.cfm", timeout=DELAI,
+                                  data=dict(fiche["champs"], VilleDepart=valeur_ville, duree=duree),
+                                  headers={"X-Requested-With": "XMLHttpRequest", "Referer": fiche["url"]})
+            r.raise_for_status()
+            for jour, montant in re.findall(r'value="(\d\d/\d\d/\d{4})\|([\d.]+)\|', r.text):
+                date = f"{jour[6:]}-{jour[3:5]}-{jour[:2]}"
+                prix = int(round(float(montant)))
+                if prix and (date not in res or prix < res[date]):
+                    res[date] = prix
+        self._dates[cle] = res
+        return res
+
+    def mois(self, candidat, ville, nuits):
+        return sorted({(int(j[5:7]), int(j[:4])) for j in self._calendrier(candidat, ville, nuits)},
+                      key=lambda m: (m[1], m[0]))
+
+    def prix(self, candidat, ville, nuits, mm, aaaa):
+        from datetime import date, timedelta
+        return [{"date": j, "prix_eur": p, "meilleur_prix": False, "compagnie": "",
+                 "retour": (date.fromisoformat(j) + timedelta(days=nuits)).isoformat(), "voyagiste": self.nom}
+                for j, p in sorted(self._calendrier(candidat, ville, nuits).items()) if j.startswith(f"{aaaa}-{mm:02d}")]
+
+    def adresse_prix(self, candidat):
+        return f"{self.base}/ajax/produitComboDatesTarifs.cfm"
+
+
 # ---------------------------------------------------------------- Plateforme Viaxeo (Climats du Monde)
 
 class PlateformeViaxeo(Connecteur):
@@ -1543,7 +1659,7 @@ class ImportNavigateur(Connecteur):
 # ---------------------------------------------------------------- Registre des sites
 
 PLATEFORMES = {c.plateforme: c for c in (PlateformeCalendrierJSON, PlateformeGrilleJSF, PlateformeCatalogueFram,
-                                          PlateformePickAlbatros, PlateformeOrchestra, PlateformeTUI, PlateformeMondialTourisme, PlateformeSpeedresa, PlateformeOrchestraLegere, PlateformeViaxeo,
+                                          PlateformePickAlbatros, PlateformeOrchestra, PlateformeTUI, PlateformeMondialTourisme, PlateformeSpeedresa, PlateformeOrchestraLegere, PlateformeViaxeo, PlateformeAdvences,
                                           ImportNavigateur)}
 
 SITES_INTEGRES = [
@@ -1559,6 +1675,7 @@ SITES_INTEGRES = [
     {"nom": "Top of Travel", "base": "https://www.topoftravel.fr", "plateforme": "speedresa"},
     {"nom": "Travel Evasion", "base": "https://www.travelevasion.fr", "plateforme": "orchestra-light"},
     {"nom": "Climats du Monde", "base": "https://www.climatsdumonde.fr", "plateforme": "viaxeo"},
+    {"nom": "Asia", "base": "https://www.asia.fr", "plateforme": "advences"},
 ]
 SANS_TRANSPORT = "XXX"  # code de ville des séjours vendus sans le vol (« Sans Transport »)
 

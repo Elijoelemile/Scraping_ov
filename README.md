@@ -20,6 +20,7 @@ Elle reprend le calendrier de prix des sites : chaque ligne du calendrier (du lu
 | **Top of Travel** | Relevé automatique (environ 65 Produits : Madère et Portugal, Albanie, Cap-Vert, Croatie, Italie, Malte, Monténégro) | Date de retour |
 | **Travel Evasion** | Relevé automatique (environ 900 Produits, surtout Égypte, Thaïlande, Espagne, Maroc, Tunisie) | Date de retour |
 | **Climats du Monde** | Relevé automatique (environ 1 240 Produits, surtout Asie : Thaïlande, Vietnam, Indonésie, Japon… et Amérique latine) | Date de retour |
+| **Asia** | Relevé automatique (environ 480 voyages avec prix publiés : séjours vol + hôtel et circuits, surtout en Asie ; voyages sur mesure exclus) | Date de retour |
 | **Thalasso N°1** | Relevé automatique (site du groupe Ovoyages, même plateforme) | « Meilleur prix » |
 | **Pick Albatros** | Relevé automatique, **hôtel seul (sans vol)** : tarifs affichés sans comparaison | Date de retour ; prix convertis de dollars en euros |
 | **Promoséjours** | Relevé fait dans votre navigateur (extension), puis importé | « Meilleur prix du mois », date de retour, formule, vol direct, voyagiste |
@@ -50,6 +51,8 @@ Voir [Ajouter un site](#ajouter-un-site) et [Sites protégés](#sites-protégés
 > **Travel Evasion** : son robots.txt interdit aux robots les adresses `/ajax/`, par lesquelles passent ses prix ; il a été ajouté sur décision de l'utilisateur, comme Ovoyages et Exotismes. Son plan du site tombe souvent en panne (erreur 500) : l'application réessaie, puis réutilise la dernière liste de Produits lue. Le site ne précise ni la formule ni le type de vol dans ses données de prix.
 
 > **Climats du Monde** : le calendrier d'un Produit (toutes villes et durées sur un an) pèse plusieurs Mo ; il est lu une fois puis gardé 10 minutes. Pas de robots.txt ni de protection anti-robot. Le site ne vend pas la République dominicaine.
+
+> **Asia** : son robots.txt interdit aux robots le script de la fiche et les adresses avec `?idproduit=` ; il a été ajouté sur décision de l'utilisateur, comme Travel Evasion. Asia vend surtout ses propres circuits, qu'aucun autre site ne propose : la comparaison porte surtout sur ses séjours vol + hôtel. Ses catégories d'hôtel ou de chambre peuvent différer de celles des autres sites (par exemple Katathani classé 4* chez Asia, 5* ailleurs).
 
 > Un même Produit peut être vendu par plusieurs sites sous des noms et des références différents. Par exemple, Ovoyages semble revendre des séjours Fram : pour certaines dates, les prix sont identiques.
 
@@ -123,7 +126,7 @@ Le serveur installe automatiquement `requirements.txt` (modules Python) et `pack
 
 À savoir en ligne :
 - **Accès** : l'application est publique par défaut. Limitez-la aux personnes invitées dans **Share** pour éviter que n'importe qui lance des relevés.
-- **Données éphémères** : le cache, les sites ajoutés depuis le panneau, les sites à étudier et les relevés importés sont **effacés à chaque redémarrage** du serveur. Seuls les sites intégrés au code (Ovoyages, Exotismes, Fram, Pick Albatros, Voyamar, Thalasso N°1, Héliades, TUI, Mondial Tourisme, Top of Travel, Travel Evasion, Climats du Monde) restent toujours disponibles.
+- **Données éphémères** : le cache, les sites ajoutés depuis le panneau, les sites à étudier et les relevés importés sont **effacés à chaque redémarrage** du serveur. Seuls les sites intégrés au code (Ovoyages, Exotismes, Fram, Pick Albatros, Voyamar, Thalasso N°1, Héliades, TUI, Mondial Tourisme, Top of Travel, Travel Evasion, Climats du Monde, Asia) restent toujours disponibles.
 - **Adresse des requêtes** : les relevés partent des serveurs de Streamlit. Un site qui bloque les adresses de serveurs peut être refusé en ligne alors qu'il fonctionne en local.
 
 ---
@@ -205,6 +208,7 @@ Un connecteur correspond à une **plateforme de réservation**, c'est-à-dire au
 | `speedresa` | Top of Travel | Moteur d'agence Speedresa : Produits listés par `/rest/search/result/load.json` (un appel, offres « vols secs » exclues) ; villes, durées et calendrier d'une ville et d'une durée, tous les mois en un appel, via `/rest/product/package/price.json` |
 | `orchestra-light` | Travel Evasion | Variante Orchestra : Produits listés dans le plan du site (`sitemap_product.xml`) ; villes et durées via `/ajax/bookingEngine/light/<n°>`, puis tous les mois d'une ville et d'une durée via `?city=…&duration=…` |
 | `viaxeo` | Climats du Monde | Application JavaScript dont l'API est sur le site (`/api/viaxeo/cms/sell-process/…`) ; identifiants du site lus dans `window.configuration` ; Produits via `…/search` (100 par page, triés par code, nombre de pages d'après `…/search/count`) ; départs de toutes les villes et durées sur un an en un appel via `…/product/proposal` (prix par personne) |
+| `advences` | Asia | Logiciel Advences : Produits listés dans le plan du site (`/formule-<type>/destination-<pays>/<nom>-<n°>`) ; villes et durées lues dans le formulaire des dates et tarifs de la fiche ; dates et prix d'une ville et d'une durée via `/ajax/produitComboDatesTarifs.cfm` |
 | `import-navigateur` | Promoséjours | Prix importés depuis l'extension de navigateur, sans aucune requête de l'application |
 
 **Écrire une plateforme** : créer dans `connecteurs.py` une classe qui hérite de `Connecteur`, implémenter `reconnaitre()`, `rechercher()`, `villes()`, `nuits()`, `mois()`, `prix()` et `adresse_prix()`, puis l'ajouter au dictionnaire `PLATEFORMES`. Pour qu'un site soit **toujours** présent, y compris en ligne, l'ajouter aussi à `SITES_INTEGRES`.
@@ -300,5 +304,5 @@ Options communes : `--ville`, `--nuits`, `--debut` / `--fin` (format `MM-AAAA`),
 
 - **Discrétion** : l'application attend environ 3 secondes entre deux requêtes vers un même site et réutilise les relevés récents. Évitez de réduire la pause ou de lancer des relevés en boucle.
 - **Sites protégés** : l'application ne contourne aucune protection anti-robot. Un site bloqué n'est pas ajouté automatiquement ; ses prix peuvent être relevés à la main avec l'extension de navigateur.
-- **`robots.txt`** : certains sites demandent aux robots de ne pas lire leurs pages de prix (c'est le cas d'Ovoyages, d'Exotismes et de Travel Evasion, pas de Fram ; Voyamar et Thalasso N°1 n'ont pas de robots.txt ; celui d'Héliades ne donne de consignes qu'à Google et quelques robots nommés). L'application le signale, et c'est à l'utilisateur de décider de l'usage qu'il en fait.
+- **`robots.txt`** : certains sites demandent aux robots de ne pas lire leurs pages de prix (c'est le cas d'Ovoyages, d'Exotismes, de Travel Evasion et d'Asia, pas de Fram ; Voyamar et Thalasso N°1 n'ont pas de robots.txt ; celui d'Héliades ne donne de consignes qu'à Google et quelques robots nommés). L'application le signale, et c'est à l'utilisateur de décider de l'usage qu'il en fait.
 - **Fiabilité** : si un site modifie son fonctionnement, son connecteur peut cesser de marcher. Le relevé affiche alors un avertissement pour le site concerné, sans bloquer les autres.
