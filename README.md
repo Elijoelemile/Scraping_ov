@@ -15,6 +15,7 @@ Elle reprend le calendrier de prix des sites : chaque ligne du calendrier (du lu
 | **Fram** | Relevé automatique, Produits classiques et **forfaits dynamiques** | « Meilleur prix », date de retour, formule |
 | **Voyamar** | Relevé automatique (1 485 Produits : séjours, circuits, croisières) | Date de retour, formule, vol direct |
 | **Héliades** | Relevé automatique (966 Produits, dont plus de 100 en République dominicaine) | Date de retour, formule, vol direct |
+| **TUI** | Relevé automatique (environ 1 080 Produits : séjours, clubs Lookéa, circuits) | « Meilleur prix », date de retour |
 | **Thalasso N°1** | Relevé automatique (site du groupe Ovoyages, même plateforme) | « Meilleur prix » |
 | **Pick Albatros** | Relevé automatique, **hôtel seul (sans vol)** : tarifs affichés sans comparaison | Date de retour ; prix convertis de dollars en euros |
 | **Promoséjours** | Relevé fait dans votre navigateur (extension), puis importé | « Meilleur prix du mois », date de retour, formule, vol direct, voyagiste |
@@ -35,6 +36,8 @@ Voir [Ajouter un site](#ajouter-un-site) et [Sites protégés](#sites-protégés
 > **Voyamar et Héliades** (même groupe, même plateforme) : la liste des Produits est lue page par page sur le site ; le premier chargement prend environ 3 minutes par site, puis elle est gardée 7 jours. Chaque Produit n'a qu'une formule (indiquée, sans sélecteur). Le départ « Sans transport » (hôtel sans le vol) n'est pas proposé, car il ne se compare pas aux forfaits. Voyamar ne vend pas la République dominicaine.
 
 > **Thalasso N°1** : environ 180 Produits, surtout des séjours bien-être en France vendus **sans transport** (ville de départ « Sans Transport ») ; les autres (Corse, Laponie, Majorque, Mexique, Punta Cana…) incluent le vol. Un Produit vendu sans transport ne se compare pas à un séjour avec vol : l'application l'indique et invite à le rechercher seul. Le site appartient à Ovoyages : un même Produit y a souvent la même référence, avec un prix légèrement différent.
+
+> **TUI** : un même hôtel existe souvent en plusieurs Produits (« Choix Flex », « Flex bagages inclus », « Sans transport »…), avec des prix différents ; vérifiez celui retenu sous le site. Certains Produits ne partent que certains jours (par exemple dimanche et mardi) : avec le filtre mercredi/samedi par défaut, ils peuvent n'afficher aucun prix. Quelques Produits ne sont pas en vente au moment de la recherche (aucun calendrier). TUI est protégé par Imperva : l'accès fonctionne aujourd'hui, mais s'il venait à être bloqué, l'application ne contournerait pas ce blocage.
 
 > Un même Produit peut être vendu par plusieurs sites sous des noms et des références différents. Par exemple, Ovoyages semble revendre des séjours Fram : pour certaines dates, les prix sont identiques.
 
@@ -108,7 +111,7 @@ Le serveur installe automatiquement `requirements.txt` (modules Python) et `pack
 
 À savoir en ligne :
 - **Accès** : l'application est publique par défaut. Limitez-la aux personnes invitées dans **Share** pour éviter que n'importe qui lance des relevés.
-- **Données éphémères** : le cache, les sites ajoutés depuis le panneau, les sites à étudier et les relevés importés sont **effacés à chaque redémarrage** du serveur. Seuls les sites intégrés au code (Ovoyages, Exotismes, Fram, Pick Albatros, Voyamar, Thalasso N°1, Héliades) restent toujours disponibles.
+- **Données éphémères** : le cache, les sites ajoutés depuis le panneau, les sites à étudier et les relevés importés sont **effacés à chaque redémarrage** du serveur. Seuls les sites intégrés au code (Ovoyages, Exotismes, Fram, Pick Albatros, Voyamar, Thalasso N°1, Héliades, TUI) restent toujours disponibles.
 - **Adresse des requêtes** : les relevés partent des serveurs de Streamlit. Un site qui bloque les adresses de serveurs peut être refusé en ligne alors qu'il fonctionne en local.
 
 ---
@@ -185,6 +188,7 @@ Un connecteur correspond à une **plateforme de réservation**, c'est-à-dire au
 | `catalogue-fram` | Fram | Produits listés dans le plan du site, classiques (`…-76450.html`) et forfaits dynamiques (`…-dp100152.html`) ; options dans la page Produit ou, pour les forfaits dynamiques, via `/api/ajax/catalogueProduit/calendriersCritere` ; prix via `/api/ajax/catalogueProduit/calendriers`, tous les mois en un appel, pour la formule choisie |
 | `hotel-seul-albatros` | Pick Albatros | Hôtels listés à partir des liens de réservation du site ; prix par nuit via le calendrier de tarifs du moteur TravelClick (91 jours par appel), convertis en euros |
 | `orchestra` | Voyamar, Héliades | Produits listés par la page de résultats `/ajax/serp` (48 par page, sans cookie de session : avec, Héliades s'arrête à la 3e page) ; villes, durées, formule et prix de tous les mois en un appel via `/ajax/bookingEngine/<n° du Produit>`. Les autres sites construits sur la plateforme Orchestra sont reconnus par « Ajouter un site » |
+| `tui` | TUI | Produits listés dans le plan du site (`…/nom-du-produit_CODE/`) ; paramètres du calendrier lus dans la page Produit ; prix d'un mois via `/ProductSheet/Home/RefreshPriceTable/`, un appel par mois |
 | `import-navigateur` | Promoséjours | Prix importés depuis l'extension de navigateur, sans aucune requête de l'application |
 
 **Écrire une plateforme** : créer dans `connecteurs.py` une classe qui hérite de `Connecteur`, implémenter `reconnaitre()`, `rechercher()`, `villes()`, `nuits()`, `mois()`, `prix()` et `adresse_prix()`, puis l'ajouter au dictionnaire `PLATEFORMES`. Pour qu'un site soit **toujours** présent, y compris en ligne, l'ajouter aussi à `SITES_INTEGRES`.

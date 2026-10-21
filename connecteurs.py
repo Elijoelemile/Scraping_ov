@@ -688,6 +688,118 @@ class PlateformePickAlbatros(Connecteur):
         return f"{self.base}/tc/shop/v1/hotel/{candidat.code}/calendar"
 
 
+# ---------------------------------------------------------------- Plateforme TUI
+
+class PlateformeTUI(Connecteur):
+    """TUI France : Produits listés dans le plan du site (…/nom-du-produit_CODE/) ; paramètres du calendrier
+    (« priceTableParams ») lus dans la page Produit ; prix d'un mois via /ProductSheet/Home/RefreshPriceTable/
+    (un appel par mois, ville et durée), par personne, en euros, base 2 adultes."""
+    plateforme = "tui"
+    DUREE_MEMOIRE = 120  # s : une réponse sert pour les villes, durées, mois et prix d'un même relevé
+
+    def __init__(self, nom, base):
+        super().__init__(nom, base)
+        self._params, self._tableaux = {}, {}
+
+    @staticmethod
+    def reconnaitre(accueil_html, produit_html):
+        return "/ProductSheet/Home/RefreshPriceTable" in accueil_html + produit_html or \
+            "var priceTableParams" in produit_html
+
+    def catalogue(self):
+        cle = f"catalogue_{hote(self.base)}"
+        cat = cache_lire(cle, 7 * 24 * 3600)
+        if cat is None:
+            index = self.get("/fstrz/sm/sitemap_index.xml").text
+            sources = [u for u in re.findall(r"<loc>([^<]+)</loc>", index) if u.endswith("sitemap-p.xml")]
+            cat = []
+            for s in sources:
+                for url in re.findall(r"<loc>([^<]+)</loc>", self.get(s, timeout=(10, 60)).text):
+                    m = re.search(r"/([^/]+)_([A-Z0-9-]+)/?$", url)
+                    if m:
+                        cat.append({"nom": slug_en_nom(m.group(1)), "url": url, "code": m.group(2)})
+            if not cat:
+                raise RuntimeError("catalogue des Produits introuvable")
+            cache_ecrire(cle, cat)
+        return cat
+
+    def rechercher(self, nom, limite=8):
+        res = [Candidat(self.nom, p["nom"], p["url"], p["code"], "", score_nom(nom, p["nom"])) for p in self.catalogue()]
+        return sorted([c for c in res if c.score >= 0.5], key=lambda c: -c.score)[:limite]
+
+    def _parametres(self, candidat):
+        if candidat.code not in self._params:
+            html = self.get(candidat.url).text
+            i = html.find("var priceTableParams")
+            brut = html[html.find("=", i) + 1:].lstrip() if i >= 0 else "null"
+            if brut.startswith("null"):
+                raise RuntimeError("aucun calendrier de prix : le Produit n'est pas en vente en ce moment")
+            self._params[candidat.code] = json.JSONDecoder().raw_decode(brut)[0]
+        return self._params[candidat.code]
+
+    def _tableau(self, candidat, ville=None, nuits=None, mm=None, aaaa=None):
+        cle = (candidat.code, ville, nuits, mm, aaaa)
+        memo = self._tableaux.get(cle)
+        if memo and time.time() - memo[0] < self.DUREE_MEMOIRE:
+            return memo[1]
+        p = dict(self._parametres(candidat), refreshSource="Init")
+        if ville:
+            p["departureCity"] = ville
+        if nuits:
+            p["duration"] = nuits
+        if mm:
+            p.update(departureDate=f"{aaaa}-{mm:02d}-01T00:00:00", refreshSource="Month")
+        self.attendre()
+        r = self.session.post(f"{self.base}/ProductSheet/Home/RefreshPriceTable/", data=json.dumps({"priceParams": p}),
+                              headers={"Content-Type": "application/json; charset=utf-8",
+                                       "X-Requested-With": "XMLHttpRequest", "Referer": candidat.url}, timeout=DELAI)
+        r.raise_for_status()
+        data = r.json()
+        if not data.get("success"):
+            raise RuntimeError("calendrier de prix indisponible")
+        self._tableaux[cle] = (time.time(), data)
+        return data
+
+    def villes(self, candidat):
+        data = self._tableau(candidat)
+        villes = {v: l.strip() for v, l in re.findall(r'<option[^>]*value="([A-Z]{3})"[^>]*>([^<]*)<',
+                                                       data.get("cities") or "")}
+        defaut = self._parametres(candidat).get("departureCity")
+        if defaut and defaut not in villes:  # un seul départ : le site n'affiche pas de liste
+            villes[defaut] = {v: k for k, v in IATA_VILLES.items()}.get(defaut, defaut).title()
+        return villes
+
+    def nuits(self, candidat, ville):
+        data = self._tableau(candidat, ville)
+        return sorted({int(n) for n in re.findall(r'<option[^>]*value="(\d+)"', data.get("durations") or "")})
+
+    def mois(self, candidat, ville, nuits):
+        data = self._tableau(candidat, ville, nuits)
+        return [(int(m), int(a)) for _, m, a in
+                re.findall(r'data-departuremonth="(\d+)/(\d+)/(\d+)"', data.get("months") or "")]
+
+    def prix(self, candidat, ville, nuits, mm, aaaa):
+        from datetime import date, timedelta
+        table = self._tableau(candidat, ville, nuits, mm, aaaa).get("priceTable") or ""
+        if f'id="currentMonth" value="01/{mm:02d}/{aaaa}"' not in table:
+            return []  # le site renvoie un autre mois quand celui-ci n'a aucun départ
+        res = []
+        for td in BeautifulSoup(table, "html.parser").find_all("td", attrs={"data-tunnelurl": True}):
+            jour, prix = td.get("data-message", ""), td.get("data-price", "")
+            if not (re.fullmatch(r"\d{8}", jour) and prix.isdigit() and int(prix) > 0):
+                continue
+            depart = date(int(jour[4:]), int(jour[2:4]), int(jour[:2]))
+            if (depart.month, depart.year) != (mm, aaaa) or f"departurecitycode={ville}" not in td["data-tunnelurl"]:
+                continue
+            res.append({"date": depart.isoformat(), "prix_eur": int(prix),
+                        "meilleur_prix": "meilleur prix" in td.get_text(" ").lower(), "compagnie": "",
+                        "retour": (depart + timedelta(days=nuits)).isoformat(), "voyagiste": self.nom})
+        return sorted(res, key=lambda r: r["date"])
+
+    def adresse_prix(self, candidat):
+        return f"{self.base}/ProductSheet/Home/RefreshPriceTable/"
+
+
 # ---------------------------------------------------------------- Plateforme Orchestra (Voyamar)
 
 class PlateformeOrchestra(Connecteur):
@@ -935,7 +1047,8 @@ class ImportNavigateur(Connecteur):
 # ---------------------------------------------------------------- Registre des sites
 
 PLATEFORMES = {c.plateforme: c for c in (PlateformeCalendrierJSON, PlateformeGrilleJSF, PlateformeCatalogueFram,
-                                          PlateformePickAlbatros, PlateformeOrchestra, ImportNavigateur)}
+                                          PlateformePickAlbatros, PlateformeOrchestra, PlateformeTUI,
+                                          ImportNavigateur)}
 
 SITES_INTEGRES = [
     {"nom": "Ovoyages", "base": "https://www.ovoyages.com", "plateforme": "calendrier-json"},
@@ -945,6 +1058,7 @@ SITES_INTEGRES = [
     {"nom": "Voyamar", "base": "https://www.voyamar-vacances.com", "plateforme": "orchestra"},
     {"nom": "Thalasso N°1", "base": "https://www.thalassonumero1.com", "plateforme": "calendrier-json"},
     {"nom": "Héliades", "base": "https://www.heliades.fr", "plateforme": "orchestra"},
+    {"nom": "TUI", "base": "https://www.tui.fr", "plateforme": "tui"},
 ]
 SANS_TRANSPORT = "XXX"  # code de ville des séjours vendus sans le vol (« Sans Transport »)
 
