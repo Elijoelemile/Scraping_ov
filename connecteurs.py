@@ -1179,12 +1179,114 @@ class PlateformeOrchestra(Connecteur):
             depart = date(aaaa, mm, int(jour))
             res.append({"date": depart.isoformat(), "prix_eur": int(round(o["price"])), "meilleur_prix": False,
                         "compagnie": "", "retour": (depart + timedelta(days=nuits)).isoformat(), "formule": formule,
-                        "vol_direct": "Oui" if o.get("directFlightPrice") == o["price"] else "Non",
+                        # Vide quand le site ne précise pas le type de vol (Travel Evasion)
+                        "vol_direct": ("Oui" if o.get("directFlightPrice") == o["price"] else "Non")
+                        if {"directFlightPrice", "nonDirectFlightPrice", "scheduledFlightPrice"} & set(o) else "",
                         "voyagiste": self.nom})
         return sorted(res, key=lambda r: r["date"])
 
     def adresse_prix(self, candidat):
         return f"{self.base}/ajax/bookingEngine/{candidat.code}"
+
+
+class PlateformeOrchestraLegere(PlateformeOrchestra):
+    """Variante Orchestra (Travel Evasion) : Produits listés dans le plan du site (sitemap_product.xml, …/<nom>/<n°>) ;
+    /ajax/bookingEngine/light/<n°> donne les villes et leurs durées (« 8-7 » = 8 jours, 7 nuits) ; avec
+    ?city=<ville>&duration=<durée>, il donne tous les mois de cette ville et de cette durée. Le départ
+    « Sans Transport » est gardé : c'est la seule ville des séjours vendus sans le vol."""
+    plateforme = "orchestra-light"
+
+    @staticmethod
+    def reconnaitre(accueil_html, produit_html):
+        return "orchestra-platform.com" in accueil_html + produit_html and "/ajax/bookingEngine/light/" in produit_html
+
+    def catalogue(self):
+        cle = f"catalogue_{hote(self.base)}"
+        cat = cache_lire(cle, 7 * 24 * 3600)
+        if cat is None:
+            # Sans l'en-tête « requête AJAX » du connecteur Orchestra. Le plan du site tombe souvent en panne
+            # (erreur 500) : 3 essais, puis la dernière liste lue, quel que soit son âge.
+            for _ in range(3):
+                r = self.get("/sitemap_product.xml", timeout=(10, 60), headers={"X-Requested-With": None})
+                cat = self.lire_plan(r.text) if r.status_code == 200 else []
+                if cat:
+                    cache_ecrire(cle, cat)
+                    break
+                time.sleep(10)
+            else:
+                cat = cache_lire(cle, float("inf"))
+                if not cat:
+                    raise RuntimeError("plan du site momentanément indisponible (erreur du site)")
+        return cat
+
+    @staticmethod
+    def lire_plan(xml):
+        """Produits du plan du site : …/<type>/<pays>/…/<nom>/<n°>."""
+        cat = []
+        for url in re.findall(r"<loc>([^<]+)</loc>", xml):
+            m = re.search(r"\.[a-z]+/([a-z-]+)/([a-z-]+)/((?:[^/]+/)*)([^/]+)/(\d+)/?$", url)
+            if m:
+                nom = re.sub(r"-(\d)$", r" \1*", m.group(4))  # « hotel-club-zodiac-4 » : 4 étoiles
+                lieux = [slug_en_nom(x) for x in m.group(3).strip("/").split("/")  # « hammamet », sauf s'il y est déjà
+                         if x and x not in m.group(4)]
+                cat.append({"nom": " ".join([slug_en_nom(nom)] + lieux), "url": url, "code": m.group(5),
+                            "destination": " > ".join([slug_en_nom(m.group(2))] + lieux)})
+        return cat
+
+    def _reponse(self, candidat, ville=None, duree=None):
+        cle = (candidat.code, ville, duree)
+        memo = self._calendriers.get(cle)
+        if memo and time.time() - memo[0] < self.DUREE_MEMOIRE:
+            return memo[1]
+        params = {"city": ville, "duration": duree} if ville else None
+        r = self.get(f"/ajax/bookingEngine/light/{candidat.code}", params=params, headers={"Referer": candidat.url},
+                     timeout=(10, 60))
+        r.raise_for_status()
+        self._calendriers[cle] = (time.time(), r.json())
+        return self._calendriers[cle][1]
+
+    def villes(self, candidat):
+        return dict(self._reponse(candidat).get("cities") or {})
+
+    def _durees(self, candidat, ville):
+        for v in (self._reponse(candidat).get("search") or {}).get("departureCity") or []:
+            if v.get("code") == ville:
+                return [d["code"] for d in v.get("durationStay") or []]
+        return []
+
+    def nuits(self, candidat, ville):
+        return sorted({int(d.split("-")[1]) for d in self._durees(candidat, ville)})
+
+    def _departs(self, candidat, ville, nuits):
+        """{date: offre la moins chère} pour toutes les formules de `nuits` nuits (« 8-7 », « 9-7 »…)."""
+        res = {}
+        for duree in [d for d in self._durees(candidat, ville) if int(d.split("-")[1]) == nuits]:
+            dispo = ((self._reponse(candidat, ville, duree).get("availabilities") or {}).get(ville) or {}).get(duree) or {}
+            for mm_aaaa, jours in dispo.items():
+                for jour, offre in jours.items():
+                    # prix « par hébergement » : pas comparable à un prix par personne
+                    if offre.get("status") != "Available" or offre.get("byHousing") or not offre.get("price"):
+                        continue
+                    date = f"{mm_aaaa[3:]}-{mm_aaaa[:2]}-{int(jour):02d}"
+                    if date not in res or offre["price"] < res[date]["price"]:
+                        res[date] = offre
+        return res
+
+    def formules(self, candidat):
+        return []  # le site ne précise pas la formule dans ses données de prix
+
+    def mois(self, candidat, ville, nuits):
+        return sorted({(int(d[5:7]), int(d[:4])) for d in self._departs(candidat, ville, nuits)},
+                      key=lambda m: (m[1], m[0]))
+
+    def prix(self, candidat, ville, nuits, mm, aaaa):
+        from datetime import date, timedelta
+        return [{"date": j, "prix_eur": int(round(o["price"])), "meilleur_prix": False, "compagnie": "",
+                 "retour": (date.fromisoformat(j) + timedelta(days=nuits)).isoformat(), "voyagiste": self.nom}
+                for j, o in sorted(self._departs(candidat, ville, nuits).items()) if j.startswith(f"{aaaa}-{mm:02d}")]
+
+    def adresse_prix(self, candidat):
+        return f"{self.base}/ajax/bookingEngine/light/{candidat.code}"
 
 
 # ---------------------------------------------------------------- Relevé fait dans le navigateur (Promoséjours)
@@ -1310,7 +1412,7 @@ class ImportNavigateur(Connecteur):
 # ---------------------------------------------------------------- Registre des sites
 
 PLATEFORMES = {c.plateforme: c for c in (PlateformeCalendrierJSON, PlateformeGrilleJSF, PlateformeCatalogueFram,
-                                          PlateformePickAlbatros, PlateformeOrchestra, PlateformeTUI, PlateformeMondialTourisme, PlateformeSpeedresa,
+                                          PlateformePickAlbatros, PlateformeOrchestra, PlateformeTUI, PlateformeMondialTourisme, PlateformeSpeedresa, PlateformeOrchestraLegere,
                                           ImportNavigateur)}
 
 SITES_INTEGRES = [
@@ -1324,6 +1426,7 @@ SITES_INTEGRES = [
     {"nom": "TUI", "base": "https://www.tui.fr", "plateforme": "tui"},
     {"nom": "Mondial Tourisme", "base": "https://www.mondialtourisme.fr", "plateforme": "mondial-tourisme"},
     {"nom": "Top of Travel", "base": "https://www.topoftravel.fr", "plateforme": "speedresa"},
+    {"nom": "Travel Evasion", "base": "https://www.travelevasion.fr", "plateforme": "orchestra-light"},
 ]
 SANS_TRANSPORT = "XXX"  # code de ville des séjours vendus sans le vol (« Sans Transport »)
 
