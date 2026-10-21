@@ -809,6 +809,137 @@ class PlateformeMondialTourisme(Connecteur):
         return candidat.url
 
 
+# ---------------------------------------------------------------- Plateforme Viaxeo (Climats du Monde)
+
+class PlateformeViaxeo(Connecteur):
+    """Sites sur la plateforme Viaxeo (Climats du Monde) : application JavaScript dont l'API est sur le site
+    (/api/viaxeo/cms/sell-process/…). Identifiants du site (siteId, tenant, canal) lus dans « window.configuration »
+    de l'accueil ; Produits via …/search (100 par page) ; départs via …/product/proposal : toutes les villes, dates et
+    durées d'un Produit sur un an en un appel, prix par personne (« paxAmount », base 2 adultes)."""
+    plateforme = "viaxeo"
+    API = "/api/viaxeo/cms/sell-process"
+    PAR_PAGE = 100  # le maximum renvoyé par le site
+    DUREE_MEMOIRE = 600  # s : la réponse (plusieurs Mo) sert pour les villes, durées, mois et prix d'un relevé
+
+    def __init__(self, nom, base):
+        super().__init__(nom, base)
+        self.session.headers["Accept"] = "application/json;charset=UTF-8"
+        self._config, self._propositions = None, {}
+
+    @staticmethod
+    def reconnaitre(accueil_html, produit_html):
+        return "viaxeo" in accueil_html and "window.configuration=" in accueil_html
+
+    def _identifiants(self):
+        if self._config is None:
+            html = self.get("/").text
+            i = html.find("window.configuration=")
+            if i < 0:
+                raise RuntimeError("configuration du site introuvable")
+            conf = json.JSONDecoder().raw_decode(html[i + len("window.configuration="):])[0]
+            site = conf["site"]
+            canal = next((c["channelId"] for c in site.get("thirdPartyConnections") or [] if c.get("channelId")), "")
+            self._config = {"siteId": site["id"], "tenant": site["tenant"], "canal": canal}
+            self.session.headers["tenant"] = site["tenant"]
+        return self._config
+
+    def _appel(self, chemin, donnees, delai=(10, 120)):
+        conf = self._identifiants()
+        self.attendre()
+        r = self.session.post(f"{self.base}{self.API}{chemin}", params={"siteId": conf["siteId"]}, json=donnees,
+                              timeout=delai)
+        r.raise_for_status()
+        return r.json()
+
+    @staticmethod
+    def _periode():
+        from datetime import date
+        debut = date.today()
+        return str(debut), str(debut.replace(year=debut.year + 1, day=min(debut.day, 28)))
+
+    def catalogue(self):
+        cle = f"catalogue_{hote(self.base)}"
+        cat = cache_lire(cle, 24 * 3600)
+        if cat is None:
+            debut, fin = self._periode()
+            demande = {"cacheData": True, "channelId": self._identifiants()["canal"], "productType": ["PACKAGE"],
+                       "productWithEdito": False, "serviceWithEdito": False, "productWithDocuments": False,
+                       "productWithMedias": False, "productWithProposals": False, "availableOnly": True,
+                       "dropDownValueDetail": False, "lang": "fr", "checkInMinDate": debut, "checkInMaxDate": fin,
+                       # sans tri, l'ordre change d'une page à l'autre : doublons et Produits manquants
+                       "resultsLimit": self.PAR_PAGE, "sortPropertyName": "PrdProductCode", "sortDirection": "ASC"}
+            # Nombre de pages d'après le total annoncé : une page peut contenir 99 Produits sans être la dernière
+            total = int(self._appel("/search/count", {k: v for k, v in demande.items()
+                                                       if not k.startswith(("results", "sort"))}).get("count") or 0)
+            cat, page, vus = [], 0, set()
+            while page <= total // self.PAR_PAGE + 1:
+                produits = self._appel("/search", dict(demande, resultsPage=page)).get("products") or []
+                if not produits:
+                    break
+                for p in produits:
+                    if p["productCode"] in vus:
+                        continue
+                    vus.add(p["productCode"])
+                    lieu = [(p.get(k) or {}).get("destinationName", "") for k in ("destinationCountry", "destinationTown")]
+                    cat.append({"nom": p["productName"], "code": p["productCode"],
+                                "url": f"{self.base}/detail-produit/p/{p['productCode']}",
+                                "destination": " > ".join(x.title() for x in lieu if x)})
+                page += 1
+            if not cat:
+                raise RuntimeError("catalogue des Produits introuvable")
+            cache_ecrire(cle, cat)
+        return cat
+
+    def rechercher(self, nom, limite=8):
+        res = [Candidat(self.nom, p["nom"], p["url"], p["code"], p["destination"], score_nom(nom, p["nom"]))
+               for p in self.catalogue()]
+        return sorted([c for c in res if c.score >= 0.5], key=lambda c: -c.score)[:limite]
+
+    def _departs(self, candidat):
+        """{ville: {"libelle": …, "prix": {nuits: {date: prix par personne le plus bas}}}} sur un an."""
+        memo = self._propositions.get(candidat.code)
+        if memo and time.time() - memo[0] < self.DUREE_MEMOIRE:
+            return memo[1]
+        debut, fin = self._periode()
+        data = self._appel("/product/proposal", {"lang": "fr", "channelId": self._identifiants()["canal"],
+                                                 "productCodes": [candidat.code], "nbAdult": 2, "nbChild": 0,
+                                                 "nbInfant": 0, "checkInMinDate": debut, "checkInMaxDate": fin},
+                           delai=(10, 180))
+        res = {}
+        for p in data.get("proposals") or []:
+            ville, prix = p.get("townDepartureIata"), p.get("paxAmount")
+            if not (ville and prix and p.get("checkInDate") and p.get("nbNight")):
+                continue
+            v = res.setdefault(ville, {"libelle": (p.get("townDepartureName") or ville).title(), "prix": {}})
+            jours = v["prix"].setdefault(int(p["nbNight"]), {})
+            if p["checkInDate"] not in jours or prix < jours[p["checkInDate"]]:
+                jours[p["checkInDate"]] = prix
+        self._propositions[candidat.code] = (time.time(), res)
+        return res
+
+    def villes(self, candidat):
+        return {v: d["libelle"] for v, d in self._departs(candidat).items()}
+
+    def nuits(self, candidat, ville):
+        return sorted((self._departs(candidat).get(ville) or {}).get("prix", {}))
+
+    def _jours(self, candidat, ville, nuits):
+        return ((self._departs(candidat).get(ville) or {}).get("prix") or {}).get(nuits) or {}
+
+    def mois(self, candidat, ville, nuits):
+        return sorted({(int(j[5:7]), int(j[:4])) for j in self._jours(candidat, ville, nuits)},
+                      key=lambda m: (m[1], m[0]))
+
+    def prix(self, candidat, ville, nuits, mm, aaaa):
+        from datetime import date, timedelta
+        return [{"date": j, "prix_eur": int(round(p)), "meilleur_prix": False, "compagnie": "",
+                 "retour": (date.fromisoformat(j) + timedelta(days=nuits)).isoformat(), "voyagiste": self.nom}
+                for j, p in sorted(self._jours(candidat, ville, nuits).items()) if j.startswith(f"{aaaa}-{mm:02d}")]
+
+    def adresse_prix(self, candidat):
+        return f"{self.base}{self.API}/product/proposal"
+
+
 # ---------------------------------------------------------------- Plateforme Speedresa (Top of Travel)
 
 class PlateformeSpeedresa(Connecteur):
@@ -1412,7 +1543,7 @@ class ImportNavigateur(Connecteur):
 # ---------------------------------------------------------------- Registre des sites
 
 PLATEFORMES = {c.plateforme: c for c in (PlateformeCalendrierJSON, PlateformeGrilleJSF, PlateformeCatalogueFram,
-                                          PlateformePickAlbatros, PlateformeOrchestra, PlateformeTUI, PlateformeMondialTourisme, PlateformeSpeedresa, PlateformeOrchestraLegere,
+                                          PlateformePickAlbatros, PlateformeOrchestra, PlateformeTUI, PlateformeMondialTourisme, PlateformeSpeedresa, PlateformeOrchestraLegere, PlateformeViaxeo,
                                           ImportNavigateur)}
 
 SITES_INTEGRES = [
@@ -1427,6 +1558,7 @@ SITES_INTEGRES = [
     {"nom": "Mondial Tourisme", "base": "https://www.mondialtourisme.fr", "plateforme": "mondial-tourisme"},
     {"nom": "Top of Travel", "base": "https://www.topoftravel.fr", "plateforme": "speedresa"},
     {"nom": "Travel Evasion", "base": "https://www.travelevasion.fr", "plateforme": "orchestra-light"},
+    {"nom": "Climats du Monde", "base": "https://www.climatsdumonde.fr", "plateforme": "viaxeo"},
 ]
 SANS_TRANSPORT = "XXX"  # code de ville des séjours vendus sans le vol (« Sans Transport »)
 

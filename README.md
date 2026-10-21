@@ -19,6 +19,7 @@ Elle reprend le calendrier de prix des sites : chaque ligne du calendrier (du lu
 | **Mondial Tourisme** | Relevé automatique (environ 550 Produits : Tunisie, Égypte, Maroc, Canaries, République dominicaine…) | Date de retour |
 | **Top of Travel** | Relevé automatique (environ 65 Produits : Madère et Portugal, Albanie, Cap-Vert, Croatie, Italie, Malte, Monténégro) | Date de retour |
 | **Travel Evasion** | Relevé automatique (environ 900 Produits, surtout Égypte, Thaïlande, Espagne, Maroc, Tunisie) | Date de retour |
+| **Climats du Monde** | Relevé automatique (environ 1 240 Produits, surtout Asie : Thaïlande, Vietnam, Indonésie, Japon… et Amérique latine) | Date de retour |
 | **Thalasso N°1** | Relevé automatique (site du groupe Ovoyages, même plateforme) | « Meilleur prix » |
 | **Pick Albatros** | Relevé automatique, **hôtel seul (sans vol)** : tarifs affichés sans comparaison | Date de retour ; prix convertis de dollars en euros |
 | **Promoséjours** | Relevé fait dans votre navigateur (extension), puis importé | « Meilleur prix du mois », date de retour, formule, vol direct, voyagiste |
@@ -47,6 +48,8 @@ Voir [Ajouter un site](#ajouter-un-site) et [Sites protégés](#sites-protégés
 > **Top of Travel** : voyagiste dont Fram revend aussi les « Top Clubs » (mêmes prix constatés). Petit catalogue (environ 65 Produits), sans robots.txt ni protection anti-robot. Les offres « vols secs » (billet d'avion seul) ne sont pas proposées.
 
 > **Travel Evasion** : son robots.txt interdit aux robots les adresses `/ajax/`, par lesquelles passent ses prix ; il a été ajouté sur décision de l'utilisateur, comme Ovoyages et Exotismes. Son plan du site tombe souvent en panne (erreur 500) : l'application réessaie, puis réutilise la dernière liste de Produits lue. Le site ne précise ni la formule ni le type de vol dans ses données de prix.
+
+> **Climats du Monde** : le calendrier d'un Produit (toutes villes et durées sur un an) pèse plusieurs Mo ; il est lu une fois puis gardé 10 minutes. Pas de robots.txt ni de protection anti-robot. Le site ne vend pas la République dominicaine.
 
 > Un même Produit peut être vendu par plusieurs sites sous des noms et des références différents. Par exemple, Ovoyages semble revendre des séjours Fram : pour certaines dates, les prix sont identiques.
 
@@ -120,7 +123,7 @@ Le serveur installe automatiquement `requirements.txt` (modules Python) et `pack
 
 À savoir en ligne :
 - **Accès** : l'application est publique par défaut. Limitez-la aux personnes invitées dans **Share** pour éviter que n'importe qui lance des relevés.
-- **Données éphémères** : le cache, les sites ajoutés depuis le panneau, les sites à étudier et les relevés importés sont **effacés à chaque redémarrage** du serveur. Seuls les sites intégrés au code (Ovoyages, Exotismes, Fram, Pick Albatros, Voyamar, Thalasso N°1, Héliades, TUI, Mondial Tourisme, Top of Travel, Travel Evasion) restent toujours disponibles.
+- **Données éphémères** : le cache, les sites ajoutés depuis le panneau, les sites à étudier et les relevés importés sont **effacés à chaque redémarrage** du serveur. Seuls les sites intégrés au code (Ovoyages, Exotismes, Fram, Pick Albatros, Voyamar, Thalasso N°1, Héliades, TUI, Mondial Tourisme, Top of Travel, Travel Evasion, Climats du Monde) restent toujours disponibles.
 - **Adresse des requêtes** : les relevés partent des serveurs de Streamlit. Un site qui bloque les adresses de serveurs peut être refusé en ligne alors qu'il fonctionne en local.
 
 ---
@@ -201,6 +204,7 @@ Un connecteur correspond à une **plateforme de réservation**, c'est-à-dire au
 | `mondial-tourisme` | Mondial Tourisme | Produits listés dans le plan du site (`/fr/sejours/<nom>`) ; villes lues dans la page Produit ; durées et calendrier complet d'une ville et d'une formule (« 9/7 » = 9 jours, 7 nuits) renvoyés par la page Produit elle-même (POST « update-availabilities ») ; pour une durée, toutes les formules de même nombre de nuits sont réunies (prix le plus bas par date) |
 | `speedresa` | Top of Travel | Moteur d'agence Speedresa : Produits listés par `/rest/search/result/load.json` (un appel, offres « vols secs » exclues) ; villes, durées et calendrier d'une ville et d'une durée, tous les mois en un appel, via `/rest/product/package/price.json` |
 | `orchestra-light` | Travel Evasion | Variante Orchestra : Produits listés dans le plan du site (`sitemap_product.xml`) ; villes et durées via `/ajax/bookingEngine/light/<n°>`, puis tous les mois d'une ville et d'une durée via `?city=…&duration=…` |
+| `viaxeo` | Climats du Monde | Application JavaScript dont l'API est sur le site (`/api/viaxeo/cms/sell-process/…`) ; identifiants du site lus dans `window.configuration` ; Produits via `…/search` (100 par page, triés par code, nombre de pages d'après `…/search/count`) ; départs de toutes les villes et durées sur un an en un appel via `…/product/proposal` (prix par personne) |
 | `import-navigateur` | Promoséjours | Prix importés depuis l'extension de navigateur, sans aucune requête de l'application |
 
 **Écrire une plateforme** : créer dans `connecteurs.py` une classe qui hérite de `Connecteur`, implémenter `reconnaitre()`, `rechercher()`, `villes()`, `nuits()`, `mois()`, `prix()` et `adresse_prix()`, puis l'ajouter au dictionnaire `PLATEFORMES`. Pour qu'un site soit **toujours** présent, y compris en ligne, l'ajouter aussi à `SITES_INTEGRES`.
