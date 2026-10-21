@@ -121,6 +121,8 @@ def analyser(adresse, lien_produit="", nom="", progression=lambda texte: None):
         # Sans lien fourni : on ouvre une page Produit trouvée sur l'accueil pour reconnaître la plateforme
         liens = re.findall(r'href="((?:https?://[^"]+)?/voyages/\d+-[^"/]+/\d+-[^"/]+\.jsf)"', accueil) + \
                 re.findall(r'href="((?:https?://[^"]+)?/[a-z0-9-]+/[^"?#]*-\d{4,})"', accueil) +                 re.findall(r'href="((?:https?://[^"]+)?/[a-z0-9-]+-\d{4,}\.html)', accueil)
+        # Plateforme Orchestra (Voyamar, Héliades) : les cartes Produit sont cliquables via « data-link »
+        liens += re.findall(r'data-link="(/[^"]+-\d{4,}\.html)"', accueil)
         if liens:
             lien = liens[0] if liens[0].startswith("http") else base + liens[0]
             try:

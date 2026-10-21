@@ -691,9 +691,11 @@ class PlateformePickAlbatros(Connecteur):
 # ---------------------------------------------------------------- Plateforme Orchestra (Voyamar)
 
 class PlateformeOrchestra(Connecteur):
-    """Sites construits sur la plateforme Orchestra (Voyamar) : Produits listés par la page de résultats
+    """Sites construits sur la plateforme Orchestra (Voyamar, Héliades) : Produits listés par la page de résultats
     /ajax/serp (48 par page) ; villes, durées et prix de tous les mois en un appel à /ajax/bookingEngine/<n°>.
     Prix par personne, en euros, comme affichés sur la fiche du Produit."""
+    # Première page de résultats : Voyamar exige le canal de vente, Héliades le refuse
+    PREMIERES_PAGES = ("/ajax/serp?s_c.canal=B2C&page=1&byPage={n}", "/ajax/serp?page=1&byPage={n}")
     plateforme = "orchestra"
     PAR_PAGE = 48  # le maximum accepté par le site
     DUREE_MEMOIRE = 120  # s : un calendrier lu sert pour tous les mois d'un même relevé
@@ -713,10 +715,18 @@ class PlateformeOrchestra(Connecteur):
         cle = f"catalogue_{hote(self.base)}"
         cat = cache_lire(cle, 7 * 24 * 3600)
         if cat is None:
-            cat, vus, page = [], set(), 1
+            cat, vus, page, modele = [], set(), 1, None
             while page <= 200:
-                html = self.get("/ajax/serp", params={"s_c.canal": "B2C", "page": page, "byPage": self.PAR_PAGE},
-                                timeout=(10, 60)).text
+                # Héliades : avec son cookie de session, la liste s'arrête à la 3e page ; sans, elle est complète
+                self.session.cookies.clear()
+                if modele is None:  # page 1 : on garde la forme d'adresse acceptée par le site
+                    for modele in self.PREMIERES_PAGES:
+                        html = self.get(modele.format(n=self.PAR_PAGE), timeout=(10, 60)).text
+                        if "<article" in html:
+                            break
+                else:  # pages suivantes : même adresse, numéro de page suivant
+                    html = self.get(modele.replace("page=1", f"page={page}").format(n=self.PAR_PAGE),
+                                    timeout=(10, 60)).text
                 cartes = html.split('<article class="card card-serp')[1:]
                 for carte in cartes:
                     lien = re.search(r'data-link="(/[^"]+-(\d+)\.html)"', carte)
@@ -727,7 +737,7 @@ class PlateformeOrchestra(Connecteur):
                     dest = re.search(r'<div class="card-destination">\s*([^<]+?)\s*<', carte)
                     cat.append({"nom": BeautifulSoup(titre.group(1), "html.parser").get_text().strip(),
                                 "url": self.base + lien.group(1), "code": lien.group(2),
-                                "destination": dest.group(1) if dest else ""})
+                                "destination": " ".join(dest.group(1).split()) if dest else ""})
                 if len(cartes) < self.PAR_PAGE:
                     break
                 page += 1
@@ -934,6 +944,7 @@ SITES_INTEGRES = [
     {"nom": "Pick Albatros", "base": "https://www.pickalbatros.com", "plateforme": "hotel-seul-albatros"},
     {"nom": "Voyamar", "base": "https://www.voyamar-vacances.com", "plateforme": "orchestra"},
     {"nom": "Thalasso N°1", "base": "https://www.thalassonumero1.com", "plateforme": "calendrier-json"},
+    {"nom": "Héliades", "base": "https://www.heliades.fr", "plateforme": "orchestra"},
 ]
 SANS_TRANSPORT = "XXX"  # code de ville des séjours vendus sans le vol (« Sans Transport »)
 

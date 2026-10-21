@@ -14,6 +14,7 @@ Elle reprend le calendrier de prix des sites : chaque ligne du calendrier (du lu
 | **Exotismes** | Relevé automatique | « Meilleur prix », compagnie aérienne |
 | **Fram** | Relevé automatique, Produits classiques et **forfaits dynamiques** | « Meilleur prix », date de retour, formule |
 | **Voyamar** | Relevé automatique (1 485 Produits : séjours, circuits, croisières) | Date de retour, formule, vol direct |
+| **Héliades** | Relevé automatique (966 Produits, dont plus de 100 en République dominicaine) | Date de retour, formule, vol direct |
 | **Thalasso N°1** | Relevé automatique (site du groupe Ovoyages, même plateforme) | « Meilleur prix » |
 | **Pick Albatros** | Relevé automatique, **hôtel seul (sans vol)** : tarifs affichés sans comparaison | Date de retour ; prix convertis de dollars en euros |
 | **Promoséjours** | Relevé fait dans votre navigateur (extension), puis importé | « Meilleur prix du mois », date de retour, formule, vol direct, voyagiste |
@@ -31,7 +32,7 @@ Voir [Ajouter un site](#ajouter-un-site) et [Sites protégés](#sites-protégés
 >
 > Les exports Word, PDF et Excel restent disponibles dans tous les cas. Pour Pick Albatros, les prix (par chambre et par nuit, en dollars) sont convertis en euros au taux de la Banque centrale européenne du jour, et donnés **par personne** : prix de la chambre pour le séjour ÷ 2 (base chambre double). Le taux utilisé est indiqué au-dessus des résultats et dans les exports. Il n'y a pas de ville de départ (« Hôtel seul, sans vol ») ; le premier chargement de la liste des hôtels Albatros prend environ 2 minutes, puis elle est gardée 7 jours.
 
-> **Voyamar** : la liste des Produits est lue page par page sur le site ; le premier chargement prend environ 4 minutes, puis elle est gardée 7 jours. Chaque Produit n'a qu'une formule (indiquée, sans sélecteur). Le départ « Sans transport » (hôtel sans le vol) n'est pas proposé, car il ne se compare pas aux forfaits. Voyamar ne vend pas la République dominicaine.
+> **Voyamar et Héliades** (même groupe, même plateforme) : la liste des Produits est lue page par page sur le site ; le premier chargement prend environ 3 minutes par site, puis elle est gardée 7 jours. Chaque Produit n'a qu'une formule (indiquée, sans sélecteur). Le départ « Sans transport » (hôtel sans le vol) n'est pas proposé, car il ne se compare pas aux forfaits. Voyamar ne vend pas la République dominicaine.
 
 > **Thalasso N°1** : environ 180 Produits, surtout des séjours bien-être en France vendus **sans transport** (ville de départ « Sans Transport ») ; les autres (Corse, Laponie, Majorque, Mexique, Punta Cana…) incluent le vol. Un Produit vendu sans transport ne se compare pas à un séjour avec vol : l'application l'indique et invite à le rechercher seul. Le site appartient à Ovoyages : un même Produit y a souvent la même référence, avec un prix légèrement différent.
 
@@ -107,7 +108,7 @@ Le serveur installe automatiquement `requirements.txt` (modules Python) et `pack
 
 À savoir en ligne :
 - **Accès** : l'application est publique par défaut. Limitez-la aux personnes invitées dans **Share** pour éviter que n'importe qui lance des relevés.
-- **Données éphémères** : le cache, les sites ajoutés depuis le panneau, les sites à étudier et les relevés importés sont **effacés à chaque redémarrage** du serveur. Seuls les sites intégrés au code (Ovoyages, Exotismes, Fram, Pick Albatros, Voyamar, Thalasso N°1) restent toujours disponibles.
+- **Données éphémères** : le cache, les sites ajoutés depuis le panneau, les sites à étudier et les relevés importés sont **effacés à chaque redémarrage** du serveur. Seuls les sites intégrés au code (Ovoyages, Exotismes, Fram, Pick Albatros, Voyamar, Thalasso N°1, Héliades) restent toujours disponibles.
 - **Adresse des requêtes** : les relevés partent des serveurs de Streamlit. Un site qui bloque les adresses de serveurs peut être refusé en ligne alors qu'il fonctionne en local.
 
 ---
@@ -183,7 +184,7 @@ Un connecteur correspond à une **plateforme de réservation**, c'est-à-dire au
 | `grille-jsf` | Exotismes (.fr, .be) | Recherche par mots-clés du site ; prix via la grille `/reservation/grilles.jsf`, un appel par mois |
 | `catalogue-fram` | Fram | Produits listés dans le plan du site, classiques (`…-76450.html`) et forfaits dynamiques (`…-dp100152.html`) ; options dans la page Produit ou, pour les forfaits dynamiques, via `/api/ajax/catalogueProduit/calendriersCritere` ; prix via `/api/ajax/catalogueProduit/calendriers`, tous les mois en un appel, pour la formule choisie |
 | `hotel-seul-albatros` | Pick Albatros | Hôtels listés à partir des liens de réservation du site ; prix par nuit via le calendrier de tarifs du moteur TravelClick (91 jours par appel), convertis en euros |
-| `orchestra` | Voyamar | Produits listés par la page de résultats `/ajax/serp` (48 par page) ; villes, durées, formule et prix de tous les mois en un appel via `/ajax/bookingEngine/<n° du Produit>`. Les autres sites construits sur la plateforme Orchestra sont reconnus par « Ajouter un site » |
+| `orchestra` | Voyamar, Héliades | Produits listés par la page de résultats `/ajax/serp` (48 par page, sans cookie de session : avec, Héliades s'arrête à la 3e page) ; villes, durées, formule et prix de tous les mois en un appel via `/ajax/bookingEngine/<n° du Produit>`. Les autres sites construits sur la plateforme Orchestra sont reconnus par « Ajouter un site » |
 | `import-navigateur` | Promoséjours | Prix importés depuis l'extension de navigateur, sans aucune requête de l'application |
 
 **Écrire une plateforme** : créer dans `connecteurs.py` une classe qui hérite de `Connecteur`, implémenter `reconnaitre()`, `rechercher()`, `villes()`, `nuits()`, `mois()`, `prix()` et `adresse_prix()`, puis l'ajouter au dictionnaire `PLATEFORMES`. Pour qu'un site soit **toujours** présent, y compris en ligne, l'ajouter aussi à `SITES_INTEGRES`.
@@ -279,5 +280,5 @@ Options communes : `--ville`, `--nuits`, `--debut` / `--fin` (format `MM-AAAA`),
 
 - **Discrétion** : l'application attend environ 3 secondes entre deux requêtes vers un même site et réutilise les relevés récents. Évitez de réduire la pause ou de lancer des relevés en boucle.
 - **Sites protégés** : l'application ne contourne aucune protection anti-robot. Un site bloqué n'est pas ajouté automatiquement ; ses prix peuvent être relevés à la main avec l'extension de navigateur.
-- **`robots.txt`** : certains sites demandent aux robots de ne pas lire leurs pages de prix (c'est le cas d'Ovoyages et d'Exotismes, pas de Fram ; Voyamar et Thalasso N°1 n'ont pas de robots.txt). L'application le signale, et c'est à l'utilisateur de décider de l'usage qu'il en fait.
+- **`robots.txt`** : certains sites demandent aux robots de ne pas lire leurs pages de prix (c'est le cas d'Ovoyages et d'Exotismes, pas de Fram ; Voyamar et Thalasso N°1 n'ont pas de robots.txt ; celui d'Héliades ne donne de consignes qu'à Google et quelques robots nommés). L'application le signale, et c'est à l'utilisateur de décider de l'usage qu'il en fait.
 - **Fiabilité** : si un site modifie son fonctionnement, son connecteur peut cesser de marcher. Le relevé affiche alors un avertissement pour le site concerné, sans bloquer les autres.
