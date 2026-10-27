@@ -2,9 +2,11 @@
 
 Lancement : double-clic sur lancer_app.bat, bouton ▷ de VS Code, ou   python -m streamlit run app.py
 """
+import re
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -93,6 +95,22 @@ def note_hotel_seul():
             f"Banque centrale européenne du {date_taux[8:]}/{date_taux[5:7]}/{date_taux[:4]} (1 € = "
             f"{str(usd).replace('.', ',')} $) ; prix par personne = prix de la chambre pour le séjour ÷ 2 "
             "(base chambre double).")
+
+
+def date_iso(texte):
+    """« 2026-1-5 », « 2026-01-05T00:00:00 », « 05/01/2026 » -> « 2026-01-05 » ; None si illisible.
+    pandas 3 (Streamlit Cloud) refuse un mélange de formats dans une même colonne : une seule date d'Exotismes
+    sans zéro devant le mois (« 2026-1-05 ») bloquait toute la page."""
+    texte = str(texte)
+    m = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})", texte)
+    if m:
+        a, mo, j = m.groups()
+    else:
+        m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", texte)
+        if not m:
+            return None
+        j, mo, a = m.groups()
+    return f"{a}-{int(mo):02d}-{int(j):02d}"
 
 
 def score_avec_reference(c, reference):
@@ -260,9 +278,14 @@ if lancer_recherche:
         ss.pop("releve", None)
         trouves, ss.injoignables = {}, {}
         with st.spinner("Recherche du Produit sur les sites…"):
-            for s in sites_choisis:
+            # Tous les sites en même temps : l'attente est celle du site le plus lent, pas la somme
+            # (chaque site garde sa pause entre deux requêtes, ce sont des serveurs différents).
+            connecteurs = ss.connecteurs
+            with ThreadPoolExecutor(max_workers=len(sites_choisis)) as pool:
+                taches = {s: pool.submit(connecteurs[s].rechercher, produit) for s in sites_choisis}
+            for s, t in taches.items():
                 try:
-                    trouves[s] = ss.connecteurs[s].rechercher(produit)
+                    trouves[s] = t.result()
                 except Exception as e:  # un site en panne ne bloque pas les autres
                     ss.injoignables[s] = e.__class__.__name__
                     trouves[s] = []
@@ -271,17 +294,20 @@ if lancer_recherche:
             nets = [c for lst in trouves.values() for c in lst if c.score >= 1]
             if nets:
                 reference = max(nets, key=lambda c: c.score).nom
-                for s in sites_choisis:
-                    if s not in ss.injoignables and not any(c.score >= 1 for c in trouves[s]):
-                        try:
-                            extra = ss.connecteurs[s].rechercher(reference)
-                        except Exception:
-                            extra = []
-                        codes = {c.code for c in trouves[s]}
-                        trouves[s] = trouves[s] + [c for c in extra if c.code not in codes]
-                        for c in trouves[s]:  # tous les candidats, y compris ceux de la première recherche
-                            c.score = score_avec_reference(c, reference)
-                        trouves[s].sort(key=lambda c: -c.score)
+                a_relancer = [s for s in sites_choisis
+                              if s not in ss.injoignables and not any(c.score >= 1 for c in trouves[s])]
+                with ThreadPoolExecutor(max_workers=max(len(a_relancer), 1)) as pool:
+                    relances = {s: pool.submit(connecteurs[s].rechercher, reference) for s in a_relancer}
+                for s in a_relancer:
+                    try:
+                        extra = relances[s].result()
+                    except Exception:
+                        extra = []
+                    codes = {c.code for c in trouves[s]}
+                    trouves[s] = trouves[s] + [c for c in extra if c.code not in codes]
+                    for c in trouves[s]:  # tous les candidats, y compris ceux de la première recherche
+                        c.score = score_avec_reference(c, reference)
+                    trouves[s].sort(key=lambda c: -c.score)
         ss.candidats = {s: [C.candidat_en_dict(c) for c in lst] for s, lst in trouves.items()}
 
 if not ss.candidats:
@@ -493,7 +519,8 @@ df = pd.DataFrame(R["lignes"])
 if df.empty:
     st.warning("Aucun prix trouvé pour ces paramètres.")
     st.stop()
-df["date"] = pd.to_datetime(df["date"])
+df["date"] = pd.to_datetime(df["date"].map(date_iso), format="%Y-%m-%d", errors="coerce")
+df = df.dropna(subset=["date"])  # date illisible : la ligne est écartée plutôt que de bloquer la page
 df["mm"], df["aaaa"] = df["date"].dt.month, df["date"].dt.year
 df["jour"] = df["date"].dt.weekday.map(lambda i: JOURS[i])
 df["semaine"] = df["date"].map(lambda d: ov.semaine_du_mois(d.date()))

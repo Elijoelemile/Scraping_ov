@@ -76,13 +76,20 @@ def _frequences():
     if time.time() - _vocabulaire["vu"] < 5:  # appelé pour chaque Produit d'un catalogue : on ne relit pas le dossier
         return _vocabulaire
     _vocabulaire["vu"] = time.time()
-    fichiers = sorted(f for f in os.listdir(DOSSIER_CACHE) if f.startswith("catalogue") and f.endswith(".json"))
-    signature = tuple((f, os.path.getmtime(os.path.join(DOSSIER_CACHE, f))) for f in fichiers)
+    # Catalogues en cache, et catalogues fournis pour les sites pas encore lus (serveur tout juste redémarré)
+    chemins = {}
+    for dossier in (DOSSIER_CATALOGUES, DOSSIER_CACHE):
+        if os.path.isdir(dossier):
+            for f in os.listdir(dossier):
+                if f.startswith("catalogue") and f.endswith(".json"):
+                    chemins[f] = os.path.join(dossier, f)
+    fichiers = sorted(chemins.values())
+    signature = tuple((f, os.path.getmtime(f)) for f in fichiers)
     if signature != _vocabulaire["signature"]:
         mots = {}
         for f in fichiers:
             try:
-                with open(os.path.join(DOSSIER_CACHE, f), encoding="utf-8") as fh:
+                with open(f, encoding="utf-8") as fh:
                     produits = json.load(fh)
             except (OSError, ValueError):
                 continue
@@ -136,7 +143,16 @@ def _chemin_cache(cle):
     return os.path.join(DOSSIER_CACHE, re.sub(r"[^A-Za-z0-9_.-]", "_", cle) + ".json")
 
 
+DOSSIER_CATALOGUES = os.path.join(DOSSIER, "catalogues")  # catalogues fournis avec l'application (mettre_a_jour_catalogues.py)
+
+
 def cache_lire(cle, duree_s):
+    # Cache vide (premier lancement, serveur redémarré) : on part du catalogue fourni, pour ne pas relire tout un site
+    # (11 min pour Ovoyages) avant la première recherche. Il est remplacé à l'expiration de sa durée.
+    fourni = os.path.join(DOSSIER_CATALOGUES, os.path.basename(_chemin_cache(cle)))
+    if cle.startswith("catalogue") and not os.path.exists(_chemin_cache(cle)) and os.path.exists(fourni):
+        import shutil
+        shutil.copyfile(fourni, _chemin_cache(cle))
     try:
         if time.time() - os.path.getmtime(_chemin_cache(cle)) < duree_s:
             with open(_chemin_cache(cle), encoding="utf-8") as f:
@@ -1379,19 +1395,21 @@ class PlateformeOrchestra(Connecteur):
         cle = f"catalogue_{hote(self.base)}"
         cat = cache_lire(cle, 7 * 24 * 3600)
         if cat is None:
-            cat, vus, page, modele = [], set(), 1, None
-            while page <= 200:
-                # Héliades : avec son cookie de session, la liste s'arrête à la 3e page ; sans, elle est complète
-                self.session.cookies.clear()
-                if modele is None:  # page 1 : on garde la forme d'adresse acceptée par le site
-                    for modele in self.PREMIERES_PAGES:
-                        html = self.get(modele.format(n=self.PAR_PAGE), timeout=(10, 60)).text
-                        if "<article" in html:
-                            break
-                else:  # pages suivantes : même adresse, numéro de page suivant
-                    html = self.get(modele.replace("page=1", f"page={page}").format(n=self.PAR_PAGE),
-                                    timeout=(10, 60)).text
+            cat, vus = [], set()
+            modele, html = self._premiere_page()
+            # Nombre de pages d'après le total annoncé (« 1 485 voyages ») : certaines pages reviennent vides par
+            # moments (erreur du site), ce qui ne veut pas dire que la liste est finie
+            # (affiché sur la page de résultats complète, pas dans sa version AJAX)
+            complete = self._page(modele.replace("/ajax/serp", "/serp").replace("page=1&byPage={n}", "")
+                                  .rstrip("?&"))
+            total = re.search(r'class="items-nb">([\d\s\xa0]+)<', complete)
+            pages = -(-int(re.sub(r"\D", "", total.group(1))) // self.PAR_PAGE) if total else 200
+            for page in range(1, min(pages, 200) + 1):
+                if page > 1:
+                    html = self._page(modele.replace("page=1", f"page={page}").format(n=self.PAR_PAGE))
                 cartes = html.split('<article class="card card-serp')[1:]
+                if not cartes and not total:
+                    break  # total inconnu : la première page vide marque la fin
                 for carte in cartes:
                     lien = re.search(r'data-link="(/[^"]+-(\d+)\.html)"', carte)
                     titre = re.search(r'<div class="card-title">\s*<div[^>]*>([^<]+)<', carte)
@@ -1402,13 +1420,32 @@ class PlateformeOrchestra(Connecteur):
                     cat.append({"nom": BeautifulSoup(titre.group(1), "html.parser").get_text().strip(),
                                 "url": self.base + lien.group(1), "code": lien.group(2),
                                 "destination": " ".join(dest.group(1).split()) if dest else ""})
-                if len(cartes) < self.PAR_PAGE:
-                    break
-                page += 1
             if not cat:
                 raise RuntimeError("catalogue des Produits introuvable")
             cache_ecrire(cle, cat)
         return cat
+
+    def _page(self, adresse):
+        """Une page de résultats ; vide par moments (erreur du site) : jusqu'à 3 essais. Sans cookie de session :
+        avec, Héliades arrête sa liste à la 3e page."""
+        html = ""
+        for _ in range(3):
+            self.session.cookies.clear()
+            try:
+                html = self.get(adresse, timeout=(10, 60)).text
+            except requests.RequestException:
+                continue
+            if "<article" in html:
+                break
+        return html
+
+    def _premiere_page(self):
+        """(forme d'adresse acceptée par le site, page 1) : Voyamar exige le canal de vente, Héliades le refuse."""
+        for modele in self.PREMIERES_PAGES:
+            html = self._page(modele.format(n=self.PAR_PAGE))
+            if "<article" in html:
+                return modele, html
+        return self.PREMIERES_PAGES[-1], ""
 
     def rechercher(self, nom, limite=8):
         res = [Candidat(self.nom, p["nom"], p["url"], p["code"], p["destination"], score_nom(nom, p["nom"]))

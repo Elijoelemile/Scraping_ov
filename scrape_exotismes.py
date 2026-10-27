@@ -89,6 +89,8 @@ class GrilleExotismes:
 
     def change(self, suffix, value, render="pageformulaire"):
         """Reproduit le onchange JSF d'une liste déroulante (requête AJAX partielle)."""
+        if suffix == "dateDepart":
+            self.mois_demande = value  # voir calendrier() : la liste du site n'indique pas toujours ce mois
         sel_id = self._select_id(suffix)
         data = self._form_values()
         data[sel_id] = value
@@ -128,7 +130,10 @@ class GrilleExotismes:
         """Renvoie une ligne par jour du mois : semaine (1..n), jour de la semaine, date, prix…"""
         form = self._form()
         mois = form.find("select", id=re.compile("dateDepart$"))
-        mois_sel = (mois.find("option", selected=True) or mois.find("option")).get("value")
+        # Le mois demandé, plutôt que celui que la liste du site marque comme choisi : pour octobre 2026, le site
+        # affiche bien le calendrier d'octobre, mais sa liste indique « novembre » (d'où un « 31 novembre »)
+        mois_sel = getattr(self, "mois_demande", None) or \
+            (mois.find("option", selected=True) or mois.find("option")).get("value")
         mm, yyyy = mois_sel.split("-")
         lignes = []
         for num_semaine, ligne in enumerate(form.select("div.calendar div.calendarLine"), start=1):
@@ -150,7 +155,7 @@ class GrilleExotismes:
                     "mois": mois_sel,
                     "semaine": num_semaine,
                     "jour_semaine": JOURS[idx_jour],
-                    "date": f"{yyyy}-{mm}-{jour:02d}",
+                    "date": f"{yyyy}-{int(mm):02d}-{jour:02d}",
                     "prix_eur": prix,
                     "devise": devise,
                     "meilleur_prix": "oui" if case.find(class_="bestPrice") else "",

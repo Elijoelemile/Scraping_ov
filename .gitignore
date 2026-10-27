@@ -34,3 +34,6 @@ imports/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Copies de sécurité laissées par mettre_a_jour_catalogues.py en cas d'interruption
+catalogues/*.ancien

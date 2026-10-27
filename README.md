@@ -38,7 +38,7 @@ Voir [Ajouter un site](#ajouter-un-site) et [Sites protégés](#sites-protégés
 >
 > Les exports Word, PDF et Excel restent disponibles dans tous les cas. Pour Pick Albatros, les prix (par chambre et par nuit, en dollars) sont convertis en euros au taux de la Banque centrale européenne du jour, et donnés **par personne** : prix de la chambre pour le séjour ÷ 2 (base chambre double). Le taux utilisé est indiqué au-dessus des résultats et dans les exports. Il n'y a pas de ville de départ (« Hôtel seul, sans vol ») ; le premier chargement de la liste des hôtels Albatros prend environ 2 minutes, puis elle est gardée 7 jours.
 
-> **Voyamar et Héliades** (même groupe, même plateforme) : la liste des Produits est lue page par page sur le site ; le premier chargement prend environ 3 minutes par site, puis elle est gardée 7 jours. Chaque Produit n'a qu'une formule (indiquée, sans sélecteur). Le départ « Sans transport » (hôtel sans le vol) n'est pas proposé, car il ne se compare pas aux forfaits. Voyamar ne vend pas la République dominicaine.
+> **Voyamar et Héliades** (même groupe, même plateforme) : la liste des Produits est lue page par page sur le site (environ 5 minutes par site ; certaines pages reviennent vides par moments et sont réessayées), puis elle est gardée 7 jours. Chaque Produit n'a qu'une formule (indiquée, sans sélecteur). Le départ « Sans transport » (hôtel sans le vol) n'est pas proposé, car il ne se compare pas aux forfaits. Voyamar ne vend pas la République dominicaine.
 
 > **Thalasso N°1** : environ 180 Produits, surtout des séjours bien-être en France vendus **sans transport** (ville de départ « Sans Transport ») ; les autres (Corse, Laponie, Majorque, Mexique, Punta Cana…) incluent le vol. Un Produit vendu sans transport ne se compare pas à un séjour avec vol : l'application l'indique et invite à le rechercher seul. Le site appartient à Ovoyages : un même Produit y a souvent la même référence, avec un prix légèrement différent.
 
@@ -54,7 +54,7 @@ Voir [Ajouter un site](#ajouter-un-site) et [Sites protégés](#sites-protégés
 
 > **Asia** : son robots.txt interdit aux robots le script de la fiche et les adresses avec `?idproduit=` ; il a été ajouté sur décision de l'utilisateur, comme Travel Evasion. Asia vend surtout ses propres circuits, qu'aucun autre site ne propose : la comparaison porte surtout sur ses séjours vol + hôtel. Ses catégories d'hôtel ou de chambre peuvent différer de celles des autres sites (par exemple Katathani classé 4* chez Asia, 5* ailleurs).
 
-> **Ovoyages** : son plan du site ne contient pas toutes ses offres (à Marrakech, 17 sur 24 manquaient, dont le Valeria Premium Dar Atlas). L'application lit donc la liste complète des offres en cours : la **première recherche sur Ovoyages prend environ 11 minutes**, puis la liste est gardée 3 jours.
+> **Ovoyages** : son plan du site ne contient pas toutes ses offres (à Marrakech, 17 sur 24 manquaient, dont le Valeria Premium Dar Atlas). L'application lit donc la liste complète des offres en cours (environ 11 minutes), puis la garde 3 jours.
 
 > Un même Produit peut être vendu par plusieurs sites sous des noms et des références différents. Par exemple, Ovoyages semble revendre des séjours Fram : pour certaines dates, les prix sont identiques.
 
@@ -129,6 +129,8 @@ Le serveur installe automatiquement `requirements.txt` (modules Python) et `pack
 À savoir en ligne :
 - **Accès** : l'application est publique par défaut. Limitez-la aux personnes invitées dans **Share** pour éviter que n'importe qui lance des relevés.
 - **Données éphémères** : le cache, les sites ajoutés depuis le panneau, les sites à étudier et les relevés importés sont **effacés à chaque redémarrage** du serveur. Seuls les sites intégrés au code (Ovoyages, Exotismes, Fram, Pick Albatros, Voyamar, Thalasso N°1, Héliades, TUI, Mondial Tourisme, Top of Travel, Travel Evasion, Climats du Monde, Asia) restent toujours disponibles.
+- **Catalogues fournis** : pour que la recherche soit immédiate même après un redémarrage, le dossier `catalogues/` contient la liste des Produits de chaque site. L'application part de ces listes quand son cache est vide, puis les relit d'elle-même à leur expiration (1 à 7 jours selon le site). Pour les mettre à jour : `python mettre_a_jour_catalogues.py` (tous les sites en même temps, environ 12 minutes ; ou `python mettre_a_jour_catalogues.py Ovoyages` pour un seul site), puis envoyer le dossier `catalogues/` sur GitHub. Si un site renvoie une liste nettement plus petite que la précédente (moins de 60 %), l'ancienne est gardée.
+- **Recherche en parallèle** : la recherche du Produit interroge tous les sites en même temps (chacun garde sa pause entre deux requêtes).
 - **Adresse des requêtes** : les relevés partent des serveurs de Streamlit. Un site qui bloque les adresses de serveurs peut être refusé en ligne alors qu'il fonctionne en local.
 
 ---
@@ -280,7 +282,9 @@ Options communes : `--ville`, `--nuits`, `--debut` / `--fin` (format `MM-AAAA`),
 | Fichier | Rôle |
 |---|---|
 | `app.py` | Application Streamlit (interface, filtres, résultats, ajout de sites, import navigateur) |
-| `connecteurs.py` | Plateformes (Ovoyages, Exotismes, Fram, Pick Albatros, Voyamar, import navigateur), registre des sites, cache |
+| `connecteurs.py` | Plateformes de tous les sites intégrés, import navigateur, registre des sites, cache |
+| `mettre_a_jour_catalogues.py` | Relit les catalogues de tous les sites et les enregistre dans `catalogues/` |
+| `catalogues/` | Listes des Produits fournies avec l'application (recherche immédiate après un redémarrage) |
 | `analyse_site.py` | Analyse d'un site avant son ajout |
 | `export_word.py` | Export Word et conversion PDF (Microsoft Word ou LibreOffice) |
 | `export_excel.py` | Export Excel (Synthèse, Comparatif, Détail) |
