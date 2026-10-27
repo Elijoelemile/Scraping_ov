@@ -12,6 +12,7 @@ Interface commune :
 """
 import calendar
 import difflib
+import functools
 import json
 import os
 import random
@@ -116,7 +117,27 @@ def mot_rare(mots):
     return min(mots, key=lambda m: (frequence_mot(m), -len(m)))
 
 
+@functools.lru_cache(maxsize=100_000)
+def _mots(texte):
+    """normaliser(), gardé en mémoire : chaque recherche compare le nom cherché à des milliers de noms."""
+    return tuple(normaliser(texte))
+
+
+@functools.lru_cache(maxsize=100_000)
+def _debuts(mots):
+    """Débuts de mots (3 lettres, depuis la 1re ou la 2e lettre : « iberostar » / « berostar »)."""
+    return {m[i:i + 3] for m in mots for i in (0, 1) if len(m) >= i + 3} | {m for m in mots if len(m) < 3}
+
+
 def score_nom(requete, nom):
+    # Tri rapide : un nom sans aucun début de mot commun avec la recherche aurait une note inférieure à 0,2
+    # (jamais proposée) ; on évite le calcul complet, qui prenait 12 s sur les 12 900 noms de Fram.
+    if not (_debuts(_mots(requete)) & _debuts(_mots(nom))):
+        return 0.0
+    return _score_nom(requete, nom)
+
+
+def _score_nom(requete, nom):
     """1.0 = tous les mots de la requête sont dans le nom ; départage par ressemblance globale.
     Les étoiles (« 3* », « 5 ») ne comptent pas : les sites les écrivent rarement dans le nom.
     Si le mot le plus rare de la requête manque, le score est plafonné : le Produit n'est plus retenu
@@ -351,7 +372,44 @@ class PlateformeGrilleJSF(Connecteur):
         return "grilles.jsf?grilleid=" in produit_html or (
             "javax.faces" in accueil_html and re.search(r'id="[^"]*homeSearch"', accueil_html) is not None)
 
+    LIEN_PRODUIT = r'(/voyages/\d+-([^/"<]+)/(\d+)-([^"/<]+)\.jsf)'
+
+    def _produit(self, url, categorie, code, slug):
+        return {"nom": slug_en_nom(slug), "url": self.base + url, "code": code,
+                "destination": slug_en_nom(re.sub(r"^(sejour|circuit|croisiere|combine)-", "", categorie))}
+
+    def catalogue(self):
+        """Produits du plan du site (…/voyages/<n°>-<catégorie>/<n°>-<nom>.jsf) : la recherche se fait sans
+        interroger le site, qui est parfois lent ou en panne."""
+        cle = f"catalogue_{hote(self.base)}"
+        cat = cache_lire(cle, 3 * 24 * 3600)
+        if cat is None:
+            xml = self.get("/sitemap.xml", timeout=(10, 60)).text
+            vus = {}
+            for url, categorie, code, slug in re.findall(r"<loc>https?://[^/<]+" + self.LIEN_PRODUIT + "</loc>", xml):
+                vus[code] = self._produit(url, categorie, code, slug)
+            cat = list(vus.values())
+            if not cat:
+                raise RuntimeError("catalogue des Produits introuvable")
+            cache_ecrire(cle, cat)
+        return cat
+
     def rechercher(self, nom, limite=8):
+        """Dans le catalogue ; si aucun Produit n'y ressemble nettement, aussi avec le moteur de recherche du site
+        (un plan du site peut oublier des Produits : celui d'Ovoyages en oubliait beaucoup)."""
+        trouves = list(self.catalogue())
+        if max((score_nom(nom, p["nom"]) for p in trouves), default=0) < 1:
+            try:
+                codes = {p["code"] for p in trouves}
+                trouves += [p for p in self._recherche_site(nom) if p["code"] not in codes]
+            except requests.RequestException:
+                pass  # site lent ou en panne : on s'en tient au catalogue
+        res = [Candidat(self.nom, p["nom"], p["url"], p["code"], p["destination"], score_nom(nom, p["nom"]))
+               for p in trouves]
+        return sorted([c for c in res if c.score >= 0.5], key=lambda c: -c.score)[:limite]
+
+    def _recherche_site(self, nom):
+        """Produits renvoyés par le moteur de recherche du site pour ce nom."""
         cle = f"recherche_{hote(self.base)}_" + "_".join(normaliser(nom))
         trouves = cache_lire(cle, 24 * 3600)
         if trouves is None:
@@ -365,14 +423,11 @@ class PlateformeGrilleJSF(Connecteur):
             self.attendre()
             html = self.session.post(self.base + form["action"], data=data, timeout=DELAI).text
             vus = {}
-            for url, categorie, code, slug in re.findall(r'href="(/voyages/\d+-([^/"]+)/(\d+)-([^"/]+)\.jsf)"', html):
-                vus[code] = {"nom": slug_en_nom(slug), "url": self.base + url, "code": code,
-                             "destination": slug_en_nom(re.sub(r"^(sejour|circuit|croisiere|combine)-", "", categorie))}
+            for url, categorie, code, slug in re.findall(r'href="' + self.LIEN_PRODUIT + '"', html):
+                vus[code] = self._produit(url, categorie, code, slug)
             trouves = list(vus.values())
             cache_ecrire(cle, trouves)
-        res = [Candidat(self.nom, p["nom"], p["url"], p["code"], p["destination"], score_nom(nom, p["nom"]))
-               for p in trouves]
-        return sorted([c for c in res if c.score >= 0.5], key=lambda c: -c.score)[:limite]
+        return trouves
 
     def _grille_id(self, candidat):
         m = re.search(r"grilles\.jsf\?grilleid=(\d+)", self.get(candidat.url).text)

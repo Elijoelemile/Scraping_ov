@@ -366,10 +366,19 @@ ecartes = {}  # site -> raison : un site qui ne répond pas est écarté, les au
 
 def lire_par_site(quoi, fonction):
     """Lit une option (villes, nuits, mois) sur chaque site retenu ; écarte les sites en panne."""
-    res = {}
-    for s, c in list(choix.items()):
+    res, a_lire = {}, {}
+    for s, c in choix.items():
+        cle = (quoi, s, c.code, *quoi_cle)
+        if cle in ss.memo:
+            res[s] = ss.memo[cle]
+        else:
+            a_lire[s] = (cle, ss.connecteurs[s], c)  # connecteur pris ici : la session n'est pas lisible depuis un fil
+    # Les sites à interroger le sont en même temps (chacun garde sa pause entre deux requêtes)
+    with ThreadPoolExecutor(max_workers=max(len(a_lire), 1)) as pool:
+        taches = {s: pool.submit(fonction, conn, c) for s, (_, conn, c) in a_lire.items()}
+    for s, t in taches.items():
         try:
-            res[s] = memo((quoi, s, c.code, *quoi_cle), lambda s=s, c=c: fonction(ss.connecteurs[s], c))
+            res[s] = ss.memo[a_lire[s][0]] = t.result()
         except Exception as e:
             ecartes[s] = e.__class__.__name__
             choix.pop(s)
